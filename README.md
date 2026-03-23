@@ -3,7 +3,11 @@
 Ein technischer Trading-Bot, der das **Fibonacci Candle Overlap**-Prinzip automatisiert:
 Nach jeder vollständig ausgebildeten Kerze wird ein Fibonacci-Retracement innerhalb dieser Kerze berechnet,
 das voraussagt, wie weit sich die neue Kerze in die vorherige überlappen (zurücksetzen) wird.
-Kein maschinelles Lernen — reine Preisstruktur-Logik.
+
+Kein maschinelles Lernen — die Handelsregel ist fest (Fibonacci-Überlagerung).
+Aber: jeder Coin und jeder Timeframe verhält sich anders, deshalb werden die Parameter
+(Fibo-Level, Filter-Schwellen, SL-Buffer) per Optuna-Optimierung auf historischen Daten
+**individuell pro Symbol/Timeframe kalibriert**. Die Pipeline (`run_pipeline.sh`) ist dafür nötig.
 
 > **Disclaimer:** Diese Software ist experimentell und dient ausschließlich Forschungszwecken.
 > Der Handel mit Kryptowährungen birgt erhebliche finanzielle Risiken. Nutzung auf eigene Gefahr.
