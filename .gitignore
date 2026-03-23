@@ -1,0 +1,22 @@
+# Secrets
+secret.json
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+*.egg-info/
+dist/
+build/
+
+# Data & artifacts
+data/cache/
+artifacts/tracker/
+artifacts/results/
+logs/
+
+# OS
+.DS_Store
+Thumbs.db
+*.swp

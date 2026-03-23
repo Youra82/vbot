@@ -1,0 +1,67 @@
+{
+    "live_trading_settings": {
+        "max_open_positions": 1,
+        "use_auto_optimizer_results": false,
+        "active_strategies": [
+            {
+                "symbol": "BTC/USDT:USDT",
+                "timeframe": "1h",
+                "active": true
+            },
+            {
+                "symbol": "ETH/USDT:USDT",
+                "timeframe": "1h",
+                "active": true
+            },
+            {
+                "symbol": "SOL/USDT:USDT",
+                "timeframe": "1h",
+                "active": true
+            }
+        ]
+    },
+    "optimization_settings": {
+        "enabled": false,
+        "schedule": {
+            "_info": "day_of_week: 0=Montag, 6=Sonntag | hour: 0-23 (24h Format)",
+            "day_of_week": 6,
+            "hour": 15,
+            "minute": 0,
+            "interval": {
+                "_info": "Einheit: minutes | hours | days | weeks",
+                "value": 7,
+                "unit": "days"
+            }
+        },
+        "symbols_to_optimize": "auto",
+        "timeframes_to_optimize": "auto",
+        "lookback_days": 180,
+        "start_capital": 1000,
+        "cpu_cores": 1,
+        "num_trials": 150,
+        "constraints": {
+            "max_drawdown_pct": 30,
+            "min_win_rate_pct": 45,
+            "min_pnl_pct": 50
+        }
+    },
+    "risk": {
+        "leverage": 10,
+        "margin_mode": "isolated",
+        "risk_per_trade_pct": 1.0
+    },
+    "signal": {
+        "_info": "Fibonacci Candle Overlap Bot",
+        "_strategy": "Nach jeder abgeschlossenen Kerze wird ein Fibo-Retracement gezogen. Die naechste Kerze ueberlagert sich mit der vorherigen bis zum Fibo-Level.",
+        "fibo_tp_level": 0.618,
+        "_fibo_tp_level_info": "Fibo-Level fuer TP: 0.236, 0.382, 0.5, 0.618, 0.786",
+        "min_candle_body_pct": 0.3,
+        "_min_candle_body_pct_info": "Mindest-Verhaeltnis Kerzenkörper zu Gesamtrange (filtert Dojis)",
+        "min_candle_range_pct": 0.2,
+        "_min_candle_range_pct_info": "Minimale Kerzrange als % des Preises",
+        "sl_buffer_pct": 0.15,
+        "_sl_buffer_pct_info": "SL-Puffer ueber/unter das Kerzenhoch/tief in %",
+        "confirm_overlap_window": 3,
+        "_confirm_overlap_window_info": "Anzahl Kerzen zurueck fuer Trend-Bestaetigungsfilter (0 = deaktiviert)"
+    }
+}
