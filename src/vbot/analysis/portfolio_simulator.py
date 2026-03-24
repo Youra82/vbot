@@ -87,7 +87,8 @@ def run_portfolio_simulation(start_capital: float,
     max_dd_pct   = 0.0
     equity_curve = []
     wins = losses = 0
-    open_positions = {}  # fname -> {entry, sl, tp, contracts, leverage, direction}
+    open_positions = {}  # fname -> {entry, sl, tp, contracts, leverage, direction, ts_open, fibo_level}
+    trade_history  = []
 
     for ts in sorted_ts:
         # 1. Offene Positionen checken
@@ -125,6 +126,15 @@ def run_portfolio_simulation(start_capital: float,
                     wins += 1
                 else:
                     losses += 1
+                trade_history.append({
+                    'ts':         pos['ts_open'],
+                    'fname':      fname,
+                    'direction':  pos['direction'],
+                    'entry':      pos['entry'],
+                    'exit':       exit_p,
+                    'pnl':        pnl_usdt,
+                    'fibo_level': pos.get('fibo_level'),
+                })
                 del open_positions[fname]
 
         # 2. Neue Signale pruefen
@@ -162,12 +172,14 @@ def run_portfolio_simulation(start_capital: float,
                 continue
 
             open_positions[fname] = {
-                'direction': sig['side'],
-                'entry':     entry_price,
-                'sl':        sl_price,
-                'tp':        tp_price,
-                'contracts': contracts,
-                'leverage':  leverage,
+                'direction':  sig['side'],
+                'entry':      entry_price,
+                'sl':         sl_price,
+                'tp':         tp_price,
+                'contracts':  contracts,
+                'leverage':   leverage,
+                'ts_open':    ts,
+                'fibo_level': sig.get('fibo_level'),
             }
 
         # 3. Equity tracken
@@ -186,12 +198,13 @@ def run_portfolio_simulation(start_capital: float,
     pnl_pct      = (equity - start_capital) / start_capital * 100
 
     return {
-        'end_capital':     round(equity, 2),
-        'total_pnl_pct':   round(pnl_pct, 2),
+        'end_capital':      round(equity, 2),
+        'total_pnl_pct':    round(pnl_pct, 2),
         'max_drawdown_pct': round(max_dd_pct, 2),
-        'trade_count':     total_trades,
-        'wins':            wins,
-        'losses':          losses,
-        'win_rate':        round(win_rate, 2),
-        'equity_curve':    equity_curve,
+        'trade_count':      total_trades,
+        'wins':             wins,
+        'losses':           losses,
+        'win_rate':         round(win_rate, 2),
+        'equity_curve':     equity_curve,
+        'trade_history':    trade_history,
     }

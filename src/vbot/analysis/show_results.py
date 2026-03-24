@@ -285,9 +285,147 @@ def run_portfolio_finder(date_from: str, date_to: str, capital: float,
 
     _save_results(all_results, portfolio_files, date_from, date_to)
 
+    # ── Excel anbieten ────────────────────────────────────────────────────────
+    if final_sim and portfolio_files:
+        if auto:
+            _generate_trades_excel(final_sim, portfolio_files, capital)
+        else:
+            print()
+            ans = input("  Excel-Tabelle fuer dieses Portfolio erstellen"
+                        " & via Telegram senden? (j/n) [Standard: n]: ").strip().lower()
+            if ans in ('j', 'y', 'ja'):
+                _generate_trades_excel(final_sim, portfolio_files, capital)
+
     if not auto and portfolio_files:
         print(f"\n{YELLOW}Tipp: Fuehre './show_results.sh' erneut aus und waehle Modus 3,")
         print(f"um settings.json mit dem optimalen Portfolio zu aktualisieren.{NC}")
+
+
+def _generate_trades_excel(final_sim: dict, portfolio_files: list, capital: float):
+    """Erstellt eine Excel-Tabelle mit allen Portfolio-Trades und sendet sie via Telegram."""
+    try:
+        import openpyxl
+        from openpyxl.styles import PatternFill, Font, Alignment, Border, Side
+        from openpyxl.utils import get_column_letter
+    except ImportError:
+        print(f"  {YELLOW}openpyxl nicht installiert — Excel uebersprungen. (pip install openpyxl){NC}")
+        return
+
+    trade_history = final_sim.get('trade_history', [])
+    if not trade_history:
+        print(f"  {YELLOW}Keine Trades — Excel uebersprungen.{NC}")
+        return
+
+    # Zeilen aufbauen
+    equity = capital
+    rows   = []
+    for i, t in enumerate(trade_history):
+        pnl      = float(t['pnl'])
+        equity  += pnl
+        fname    = t.get('fname', '')
+        strat    = fname.replace('config_', '').replace('_fibo.json', '')
+        dir_     = t.get('direction', '').upper()
+        entry    = round(float(t.get('entry',      0)), 6)
+        exit_p   = round(float(t.get('exit',       0)), 6)
+        fibo_lvl = t.get('fibo_level', '')
+        ergebnis = 'TP erreicht' if pnl > 0 else 'SL erreicht'
+        rows.append({
+            'Nr':            i + 1,
+            'Datum':         str(t.get('ts', ''))[:16].replace('T', ' '),
+            'Strategie':     strat,
+            'Richtung':      dir_,
+            'Fibo-Level':    fibo_lvl,
+            'Entry':         entry,
+            'Exit':          exit_p,
+            'Ergebnis':      ergebnis,
+            'PnL (USDT)':    round(pnl,    4),
+            'Kapital':       round(equity, 4),
+        })
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = 'Trades'
+
+    header_fill = PatternFill('solid', fgColor='1E3A5F')
+    win_fill    = PatternFill('solid', fgColor='D6F4DC')
+    loss_fill   = PatternFill('solid', fgColor='FAD7D7')
+    alt_fill    = PatternFill('solid', fgColor='F2F2F2')
+    thin_border = Border(
+        left=Side(style='thin', color='CCCCCC'), right=Side(style='thin', color='CCCCCC'),
+        top=Side(style='thin', color='CCCCCC'),  bottom=Side(style='thin', color='CCCCCC'),
+    )
+    col_widths = {
+        'Nr': 5, 'Datum': 18, 'Strategie': 26, 'Richtung': 10, 'Fibo-Level': 12,
+        'Entry': 14, 'Exit': 14, 'Ergebnis': 14, 'PnL (USDT)': 14, 'Kapital': 16,
+    }
+
+    headers = list(rows[0].keys())
+    for col, h in enumerate(headers, 1):
+        cell = ws.cell(row=1, column=col, value=h)
+        cell.fill      = header_fill
+        cell.font      = Font(bold=True, color='FFFFFF', size=11)
+        cell.alignment = Alignment(horizontal='center', vertical='center')
+        cell.border    = thin_border
+        ws.column_dimensions[get_column_letter(col)].width = col_widths.get(h, 14)
+    ws.row_dimensions[1].height = 22
+
+    for r_idx, row in enumerate(rows, 2):
+        if row['Ergebnis'] == 'TP erreicht':
+            fill = win_fill
+        elif r_idx % 2 == 0:
+            fill = loss_fill
+        else:
+            fill = alt_fill
+        for col, key in enumerate(headers, 1):
+            cell = ws.cell(row=r_idx, column=col, value=row[key])
+            cell.fill      = fill
+            cell.border    = thin_border
+            cell.alignment = Alignment(horizontal='center', vertical='center')
+            if key in ('Entry', 'Exit', 'PnL (USDT)', 'Kapital'):
+                cell.number_format = '#,##0.0000'
+        ws.row_dimensions[r_idx].height = 18
+
+    # Zusammenfassung
+    total  = len(rows)
+    wins   = sum(1 for r in rows if r['Ergebnis'] == 'TP erreicht')
+    sr     = total + 3
+    pnl_total = rows[-1]['Kapital'] - capital if rows else 0.0
+    pnl_pct   = pnl_total / capital * 100 if capital else 0.0
+    ws.cell(row=sr, column=1, value='Zusammenfassung').font = Font(bold=True, size=11)
+    for label, value in [
+        ('Trades gesamt', total),
+        ('Win-Rate',      f"{wins / total * 100:.1f}%" if total else '—'),
+        ('PnL',           f"{pnl_pct:+.1f}%"),
+        ('Endkapital',    f"{rows[-1]['Kapital']:.2f} USDT" if rows else '—'),
+    ]:
+        ws.cell(row=sr, column=1, value=label).font = Font(bold=True)
+        ws.cell(row=sr, column=2, value=value)
+        sr += 1
+
+    os.makedirs(os.path.join(PROJECT_ROOT, 'artifacts', 'charts'), exist_ok=True)
+    out_file = os.path.join(PROJECT_ROOT, 'artifacts', 'charts', 'vbot_trades.xlsx')
+    wb.save(out_file)
+    print(f"  {GREEN}Excel gespeichert: {out_file}{NC}")
+
+    # Telegram
+    secret_path = os.path.join(PROJECT_ROOT, 'secret.json')
+    try:
+        with open(secret_path) as f:
+            secrets = json.load(f)
+        tg        = secrets.get('telegram', {})
+        bot_token = tg.get('bot_token', '')
+        chat_id   = tg.get('chat_id',   '')
+    except Exception:
+        bot_token = chat_id = ''
+
+    if bot_token and chat_id:
+        from vbot.utils.telegram import send_document
+        caption = (f"vbot Trades — {total} Trades | "
+                   f"WR: {wins / total * 100:.1f}% | PnL: {pnl_pct:+.1f}%" if total else "vbot Trades")
+        send_document(bot_token, chat_id, out_file, caption=caption)
+        print(f"  {GREEN}Via Telegram gesendet.{NC}")
+    else:
+        print(f"  {YELLOW}Telegram nicht konfiguriert — nur lokal gespeichert.{NC}")
 
 
 def _print_portfolio_result(result: dict, start_capital: float):
