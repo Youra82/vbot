@@ -237,7 +237,6 @@ PYEOF
             echo -e "${GREEN}settings.json wurde nicht geaendert.${NC}"
         fi
     fi
-fi
 
 # ─────────────────────────────────────────
 # Modus 4: Interaktive Charts
