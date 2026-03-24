@@ -320,7 +320,7 @@ def _save_results(all_results: list, portfolio_files: list, date_from: str, date
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='vbot — Ergebnisanzeige')
-    parser.add_argument('--mode',          type=int,   default=1, choices=[1, 2, 3])
+    parser.add_argument('--mode',          type=int,   default=1, choices=[1, 2, 3, 4])
     parser.add_argument('--capital',       type=float, default=1000.0)
     parser.add_argument('--from',  dest='date_from',   default=None)
     parser.add_argument('--to',    dest='date_to',     default=None)
@@ -351,3 +351,11 @@ if __name__ == "__main__":
             auto=args.auto,
             configs_filter=cfg_list,
         )
+    elif args.mode == 4:
+        from vbot.analysis.interactive_chart import run_interactive_chart
+        secret_path = os.path.join(PROJECT_ROOT, 'secret.json')
+        secrets = {}
+        if os.path.exists(secret_path):
+            with open(secret_path) as f:
+                secrets = json.load(f)
+        run_interactive_chart(secrets)

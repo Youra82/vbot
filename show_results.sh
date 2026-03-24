@@ -26,11 +26,12 @@ echo -e "${YELLOW}Waehle einen Analyse-Modus:${NC}"
 echo "  1) Einzel-Analyse              (jede Strategie wird isoliert getestet)"
 echo "  2) Manuelle Portfolio-Simulation  (du waehlst das Team)"
 echo "  3) Automatische Portfolio-Optimierung  (der Bot waehlt das beste Team)"
+echo "  4) Interaktive Charts          (Candlestick + Entry/Exit-Marker)"
 echo ""
-read -p "Auswahl (1-3) [Standard: 1]: " MODE
+read -p "Auswahl (1-4) [Standard: 1]: " MODE
 MODE="${MODE//[$'\r\n ']/}"
 
-if [[ ! "$MODE" =~ ^[1-3]?$ ]]; then
+if [[ ! "$MODE" =~ ^[1-4]?$ ]]; then
     echo -e "${RED}Ungueltige Eingabe. Verwende Standard (1).${NC}"
     MODE=1
 fi
@@ -236,6 +237,14 @@ PYEOF
             echo -e "${GREEN}settings.json wurde nicht geaendert.${NC}"
         fi
     fi
+fi
+
+# ─────────────────────────────────────────
+# Modus 4: Interaktive Charts
+# ─────────────────────────────────────────
+elif [ "$MODE" == "4" ]; then
+    $PYTHON src/vbot/analysis/show_results.py --mode 4
+
 fi
 
 deactivate
