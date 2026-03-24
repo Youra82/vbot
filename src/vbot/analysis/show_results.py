@@ -91,11 +91,11 @@ def run_all_configs_isolated(date_from: str, date_to: str, capital: float,
         print(f"{RED}Kein Backtest erfolgreich.{NC}")
         return
 
-    W = 100
+    W = 112
     print(f"\n{'='*W}")
     print(f"{'Zusammenfassung aller Einzelstrategien':^{W}}")
     print(f"{'='*W}")
-    print(f"  {'Strategie':<24}  {'Trades':>6}  {'WR %':>6}  {'PnL %':>7}  {'MaxDD %':>7}  {'R:R':>5}  {'Fibo':>5}")
+    print(f"  {'Strategie':<24}  {'Trades':>6}  {'WR %':>6}  {'PnL %':>7}  {'MaxDD %':>7}  {'R:R':>5}  {'Fibo':>5}  {'Endkapital':>12}")
     for r in sorted(results, key=lambda x: x['pnl_pct'], reverse=True):
         strat  = f"{r['symbol'].split('/')[0]}/{r['timeframe']}"
         color  = GREEN if r['pnl_pct'] >= 0 else RED
@@ -103,7 +103,8 @@ def run_all_configs_isolated(date_from: str, date_to: str, capital: float,
         print(f"  {strat:<24}  {r['trades']:>6}  {r['win_rate']:>6.1f}  "
               f"{color}{r['pnl_pct']:>7.2f}{NC}  "
               f"{dd_col}{r['max_dd']:>7.2f}{NC}  "
-              f"{r['avg_rr']:>5.2f}  {str(r['fibo_lvl']):>5}")
+              f"{r['avg_rr']:>5.2f}  {str(r['fibo_lvl']):>5}  "
+              f"{color}{r['end_cap']:>11.2f}{NC} USDT")
     print(f"{'='*W}")
 
 
