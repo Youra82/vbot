@@ -271,7 +271,9 @@ def run_portfolio_finder(date_from: str, date_to: str, capital: float,
     # ── Schritt 4: Greedy Erweiterung — nur hinzufuegen wenn Verbesserung ────
     portfolio_files = [best_single['filename']]
     used_coins      = {best_single['coin']}
-    best_end_cap    = best_single_sim['end_capital']
+    # Baseline: isolierter Backtester-Wert (nicht Portfolio-Sim)
+    # → Gruppe wird nur akzeptiert wenn sie den isolierten Einzelwert schlaegt
+    best_end_cap    = best_single['end_capital']
     final_sim       = best_single_sim
     best_single['in_portfolio'] = True
 
