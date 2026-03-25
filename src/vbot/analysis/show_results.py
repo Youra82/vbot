@@ -158,7 +158,7 @@ def run_manual_portfolio(date_from: str, date_to: str, capital: float,
 
 
 # ---------------------------------------------------------------------------
-# Modus 3: Automatische Portfolio-Optimierung (Greedy)
+# Modus 3: Automatische Portfolio-Optimierung (Greedy wie fibot)
 # ---------------------------------------------------------------------------
 
 def run_portfolio_finder(date_from: str, date_to: str, capital: float,
@@ -183,7 +183,7 @@ def run_portfolio_finder(date_from: str, date_to: str, capital: float,
     print(f"Zeitraum: {date_from} -> {date_to} | Kapital: {capital:.0f} USDT")
     print(f"Constraints: MaxDD <= {target_max_dd}% | MinWR >= {min_wr}%\n")
 
-    # Alle Configs backtesten
+    # ── Schritt 1: Alle Configs isoliert backtesten ───────────────────────────
     all_results = []
     data_cache  = {}
 
@@ -229,7 +229,7 @@ def run_portfolio_finder(date_from: str, date_to: str, capital: float,
         _save_results([], [], date_from, date_to)
         return
 
-    # Filtern nach Constraints
+    # ── Schritt 2: Kandidaten filtern ────────────────────────────────────────
     candidates = [r for r in all_results
                   if r['max_dd'] <= target_max_dd and r['win_rate'] >= min_wr and r['pnl_pct'] > 0]
 
@@ -241,64 +241,214 @@ def run_portfolio_finder(date_from: str, date_to: str, capital: float,
         _save_results(all_results, [], date_from, date_to)
         return
 
-    # Greedy Portfolio-Aufbau: keine Coin-Kollisionen
-    candidates_sorted = sorted(candidates, key=lambda x: x['pnl_pct'], reverse=True)
-    portfolio_files   = []
-    used_coins        = set()
+    # ── Schritt 3: Beste Einzelstrategie als Baseline ────────────────────────
+    candidates_sorted = sorted(candidates, key=lambda x: x['end_capital'], reverse=True)
 
+    best_single     = None
+    best_single_sim = None
+    print(f"\n  Suche beste Einzelstrategie als Baseline...")
     for r in candidates_sorted:
-        if r['coin'] in used_coins:
-            continue  # Kein zweites Symbol desselben Coins
-
-        test_portfolio = portfolio_files + [r['filename']]
-        test_data = {fn: data_cache[fn] for fn in test_portfolio if fn in data_cache}
-
-        sim = run_portfolio_simulation(capital, test_data, date_from, date_to)
+        sim = run_portfolio_simulation(
+            capital, {r['filename']: data_cache[r['filename']]}, date_from, date_to
+        )
         if sim is None:
             continue
-
         if sim['max_drawdown_pct'] <= target_max_dd:
-            portfolio_files.append(r['filename'])
-            used_coins.add(r['coin'])
-            r['in_portfolio'] = True
-            print(f"  + Hinzugefuegt: {r['filename'].replace('config_', '').replace('_fibo.json', '')} "
-                  f"(DD: {sim['max_drawdown_pct']:.1f}% | PnL: {sim['total_pnl_pct']:+.1f}%)")
+            best_single     = r
+            best_single_sim = sim
+            break
 
-    # Portfolio-Simulation mit finalem Portfolio
-    if portfolio_files:
-        final_data = {fn: data_cache[fn] for fn in portfolio_files if fn in data_cache}
-        final_sim  = run_portfolio_simulation(capital, final_data, date_from, date_to)
+    if best_single is None:
+        print(f"{YELLOW}Keine Einzelstrategie besteht DD-Pruefung.{NC}")
+        _save_results(all_results, [], date_from, date_to)
+        return
 
-        print(f"\n{'='*60}")
-        print(f"{'OPTIMALES PORTFOLIO':^60}")
-        print(f"{'='*60}")
-        for fn in portfolio_files:
-            r = next(x for x in all_results if x['filename'] == fn)
-            print(f"  {r['symbol'].split('/')[0]}/{r['timeframe']}: "
-                  f"PnL={r['pnl_pct']:+.2f}%  WR={r['win_rate']:.1f}%  DD={r['max_dd']:.1f}%")
+    lbl = best_single['filename'].replace('config_', '').replace('_fibo.json', '')
+    print(f"  Baseline: {lbl}  "
+          f"EndKap={best_single_sim['end_capital']:.2f} USDT  "
+          f"DD={best_single_sim['max_drawdown_pct']:.1f}%")
 
-        if final_sim:
-            print(f"\n  Portfolio-Gesamt:")
-            _print_portfolio_result(final_sim, capital)
-    else:
-        print(f"{YELLOW}Kein Portfolio gefunden — alle Kandidaten kollidierten.{NC}")
+    # ── Schritt 4: Greedy Erweiterung — nur hinzufuegen wenn Verbesserung ────
+    portfolio_files = [best_single['filename']]
+    used_coins      = {best_single['coin']}
+    best_end_cap    = best_single_sim['end_capital']
+    final_sim       = best_single_sim
+    best_single['in_portfolio'] = True
+
+    remaining = [r for r in candidates_sorted
+                 if r['filename'] != best_single['filename']]
+
+    improved = True
+    while improved:
+        improved = False
+        for r in remaining:
+            if r['coin'] in used_coins or r['filename'] in portfolio_files:
+                continue
+
+            test_files = portfolio_files + [r['filename']]
+            test_data  = {fn: data_cache[fn] for fn in test_files if fn in data_cache}
+            sim = run_portfolio_simulation(capital, test_data, date_from, date_to)
+            if sim is None:
+                continue
+
+            # Nur aufnehmen wenn: Endkapital steigt UND DD bleibt im Limit
+            if sim['end_capital'] > best_end_cap and sim['max_drawdown_pct'] <= target_max_dd:
+                portfolio_files.append(r['filename'])
+                used_coins.add(r['coin'])
+                r['in_portfolio'] = True
+                best_end_cap = sim['end_capital']
+                final_sim    = sim
+                lbl = r['filename'].replace('config_', '').replace('_fibo.json', '')
+                print(f"  + {lbl}  "
+                      f"EndKap={sim['end_capital']:.2f} USDT  "
+                      f"DD={sim['max_drawdown_pct']:.1f}%")
+                improved = True
+                break   # Neustart der Schleife nach jeder Hinzufuegung
+
+    # ── Ergebnis ausgeben ─────────────────────────────────────────────────────
+    print(f"\n{'='*60}")
+    print(f"{'OPTIMALES PORTFOLIO':^60}")
+    print(f"{'='*60}")
+    for fn in portfolio_files:
+        r = next(x for x in all_results if x['filename'] == fn)
+        strat = f"{r['symbol'].split('/')[0]}/{r['timeframe']}"
+        print(f"  {strat:<20}  PnL={r['pnl_pct']:+.2f}%  WR={r['win_rate']:.1f}%  DD={r['max_dd']:.1f}%")
+    if len(portfolio_files) == 1:
+        print(f"\n  (Einzelstrategie — kein weiterer Coin verbessert das Portfolio)")
+
+    print(f"\n  Portfolio-Gesamt:")
+    _print_portfolio_result(final_sim, capital)
 
     _save_results(all_results, portfolio_files, date_from, date_to)
 
-    # ── Excel anbieten ────────────────────────────────────────────────────────
-    if final_sim and portfolio_files:
-        if auto:
+    # ── Charts + Excel senden ─────────────────────────────────────────────────
+    if auto:
+        _generate_portfolio_chart(final_sim, all_results, portfolio_files,
+                                  capital, date_from, date_to)
+        _generate_trades_excel(final_sim, portfolio_files, capital)
+    else:
+        print()
+        ans = input("  Charts & Excel erstellen und via Telegram senden? "
+                    "(j/n) [Standard: n]: ").strip().lower()
+        if ans in ('j', 'y', 'ja'):
+            _generate_portfolio_chart(final_sim, all_results, portfolio_files,
+                                      capital, date_from, date_to)
             _generate_trades_excel(final_sim, portfolio_files, capital)
-        else:
-            print()
-            ans = input("  Excel-Tabelle fuer dieses Portfolio erstellen"
-                        " & via Telegram senden? (j/n) [Standard: n]: ").strip().lower()
-            if ans in ('j', 'y', 'ja'):
-                _generate_trades_excel(final_sim, portfolio_files, capital)
 
-    if not auto and portfolio_files:
-        print(f"\n{YELLOW}Tipp: Fuehre './show_results.sh' erneut aus und waehle Modus 3,")
-        print(f"um settings.json mit dem optimalen Portfolio zu aktualisieren.{NC}")
+
+def _generate_portfolio_chart(final_sim: dict, all_results: list, portfolio_files: list,
+                               capital: float, date_from: str, date_to: str):
+    """Erstellt interaktiven Plotly-Equity-Chart und sendet ihn via Telegram."""
+    try:
+        import plotly.graph_objects as go
+    except ImportError:
+        print(f"  {YELLOW}plotly nicht installiert — Chart uebersprungen. (pip install plotly){NC}")
+        return
+
+    equity_curve = final_sim.get('equity_curve', [])
+    if not equity_curve:
+        print(f"  {YELLOW}Keine Equity-Daten — Chart uebersprungen.{NC}")
+        return
+
+    ts_vals  = [e['timestamp'] for e in equity_curve]
+    eq_vals  = [e['equity']   for e in equity_curve]
+
+    # Portfolio-Namen fuer Titel
+    strat_labels = []
+    for fn in portfolio_files:
+        r = next((x for x in all_results if x['filename'] == fn), None)
+        if r:
+            strat_labels.append(f"{r['symbol'].split('/')[0]}/{r['timeframe']}")
+
+    n_strats  = len(portfolio_files)
+    pnl_pct   = final_sim['total_pnl_pct']
+    max_dd    = final_sim['max_drawdown_pct']
+    end_cap   = final_sim['end_capital']
+    sign      = '+' if pnl_pct >= 0 else ''
+
+    fig = go.Figure()
+
+    # Equity-Kurve
+    fig.add_trace(go.Scatter(
+        x=ts_vals, y=eq_vals,
+        mode='lines',
+        name='Portfolio Equity',
+        line=dict(color='#2196F3', width=2),
+        hovertemplate='%{x}<br>Kapital: %{y:.2f} USDT<extra></extra>',
+    ))
+
+    # Startlinie
+    fig.add_hline(y=capital, line_dash='dash', line_color='gray', opacity=0.5,
+                  annotation_text=f'Start: {capital:.0f} USDT',
+                  annotation_position='bottom right')
+
+    # Trade-Marker (Wins / Losses)
+    trade_history = final_sim.get('trade_history', [])
+    win_ts  = [t['ts'] for t in trade_history if t['pnl'] > 0]
+    loss_ts = [t['ts'] for t in trade_history if t['pnl'] <= 0]
+
+    # Equity-Wert zum Zeitpunkt des Trades suchen
+    eq_map = {e['timestamp']: e['equity'] for e in equity_curve}
+
+    if win_ts:
+        fig.add_trace(go.Scatter(
+            x=win_ts,
+            y=[eq_map.get(t, capital) for t in win_ts],
+            mode='markers',
+            name='TP',
+            marker=dict(symbol='circle', color='#4CAF50', size=6),
+            hovertemplate='TP: %{x}<extra></extra>',
+        ))
+    if loss_ts:
+        fig.add_trace(go.Scatter(
+            x=loss_ts,
+            y=[eq_map.get(t, capital) for t in loss_ts],
+            mode='markers',
+            name='SL',
+            marker=dict(symbol='x', color='#F44336', size=6),
+            hovertemplate='SL: %{x}<extra></extra>',
+        ))
+
+    title = (f"vbot Portfolio | {', '.join(strat_labels)}<br>"
+             f"<sup>{date_from} → {date_to} | "
+             f"PnL: {sign}{pnl_pct:.2f}% | MaxDD: {max_dd:.1f}% | "
+             f"Endkapital: {end_cap:.2f} USDT</sup>")
+
+    fig.update_layout(
+        title=dict(text=title, font=dict(size=14)),
+        xaxis=dict(title='Datum', rangeslider=dict(visible=True)),
+        yaxis=dict(title='Kapital (USDT)'),
+        legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='right', x=1),
+        template='plotly_dark',
+        height=550,
+    )
+
+    os.makedirs(os.path.join(PROJECT_ROOT, 'artifacts', 'charts'), exist_ok=True)
+    out_file = os.path.join(PROJECT_ROOT, 'artifacts', 'charts', 'vbot_portfolio_equity.html')
+    fig.write_html(out_file, include_plotlyjs='cdn')
+    print(f"  {GREEN}Chart gespeichert: {out_file}{NC}")
+
+    # Telegram
+    secret_path = os.path.join(PROJECT_ROOT, 'secret.json')
+    try:
+        with open(secret_path) as f:
+            secrets = json.load(f)
+        tg        = secrets.get('telegram', {})
+        bot_token = tg.get('bot_token', '')
+        chat_id   = tg.get('chat_id',   '')
+    except Exception:
+        bot_token = chat_id = ''
+
+    if bot_token and chat_id:
+        from vbot.utils.telegram import send_document
+        caption = (f"vbot Portfolio Chart | {n_strats} Strategie(n) | "
+                   f"{date_from} → {date_to} | "
+                   f"PnL: {sign}{pnl_pct:.2f}% | MaxDD: {max_dd:.1f}% | "
+                   f"Endkap: {end_cap:.2f} USDT")
+        send_document(bot_token, chat_id, out_file, caption=caption)
+        print(f"  {GREEN}Chart via Telegram gesendet.{NC}")
+    else:
+        print(f"  {YELLOW}Telegram nicht konfiguriert — Chart nur lokal gespeichert.{NC}")
 
 
 def _generate_trades_excel(final_sim: dict, portfolio_files: list, capital: float):
