@@ -184,8 +184,9 @@ def run_portfolio_finder(date_from: str, date_to: str, capital: float,
     print(f"Constraints: MaxDD <= {target_max_dd}% | MinWR >= {min_wr}%\n")
 
     # ── Schritt 1: Alle Configs isoliert backtesten ───────────────────────────
-    all_results = []
-    data_cache  = {}
+    all_results      = []
+    data_cache       = {}
+    backtest_results = {}   # fname -> BacktestResult (fuer Chart)
 
     for fname in cfg_files:
         cfg_path = os.path.join(CONFIGS_DIR, fname)
@@ -209,6 +210,7 @@ def run_portfolio_finder(date_from: str, date_to: str, capital: float,
                               'df': df, 'config': config}
 
         result = run_backtest(df, config, capital, symbol, timeframe)
+        backtest_results[fname] = result
         coin = symbol.split('/')[0]
         all_results.append({
             'filename':     fname,
@@ -324,7 +326,7 @@ def run_portfolio_finder(date_from: str, date_to: str, capital: float,
     # ── Charts + Excel senden ─────────────────────────────────────────────────
     if auto:
         _generate_portfolio_chart(final_sim, all_results, portfolio_files,
-                                  capital, date_from, date_to)
+                                  capital, date_from, date_to, backtest_results)
         _generate_trades_excel(final_sim, portfolio_files, capital)
     else:
         print()
@@ -332,15 +334,17 @@ def run_portfolio_finder(date_from: str, date_to: str, capital: float,
                     "(j/n) [Standard: n]: ").strip().lower()
         if ans in ('j', 'y', 'ja'):
             _generate_portfolio_chart(final_sim, all_results, portfolio_files,
-                                      capital, date_from, date_to)
+                                      capital, date_from, date_to, backtest_results)
             _generate_trades_excel(final_sim, portfolio_files, capital)
 
 
 def _generate_portfolio_chart(final_sim: dict, all_results: list, portfolio_files: list,
-                               capital: float, date_from: str, date_to: str):
-    """Erstellt interaktiven Plotly-Equity-Chart und sendet ihn via Telegram."""
+                               capital: float, date_from: str, date_to: str,
+                               backtest_results: dict = None):
+    """Erstellt interaktiven Portfolio-Equity-Chart im fibot-Stil und sendet via Telegram."""
     try:
         import plotly.graph_objects as go
+        from plotly.subplots import make_subplots
     except ImportError:
         print(f"  {YELLOW}plotly nicht installiert — Chart uebersprungen. (pip install plotly){NC}")
         return
@@ -350,82 +354,127 @@ def _generate_portfolio_chart(final_sim: dict, all_results: list, portfolio_file
         print(f"  {YELLOW}Keine Equity-Daten — Chart uebersprungen.{NC}")
         return
 
-    ts_vals  = [e['timestamp'] for e in equity_curve]
-    eq_vals  = [e['equity']   for e in equity_curve]
+    trade_history = final_sim.get('trade_history', [])
+    portfolio_set = set(portfolio_files)
 
-    # Portfolio-Namen fuer Titel
+    eq_times = [str(e['timestamp']) for e in equity_curve]
+    eq_vals  = [e['equity']         for e in equity_curve]
+
     strat_labels = []
     for fn in portfolio_files:
         r = next((x for x in all_results if x['filename'] == fn), None)
         if r:
             strat_labels.append(f"{r['symbol'].split('/')[0]}/{r['timeframe']}")
 
-    n_strats  = len(portfolio_files)
-    pnl_pct   = final_sim['total_pnl_pct']
-    max_dd    = final_sim['max_drawdown_pct']
-    end_cap   = final_sim['end_capital']
-    sign      = '+' if pnl_pct >= 0 else ''
+    n_strats = len(portfolio_files)
+    pnl_pct  = final_sim['total_pnl_pct']
+    max_dd   = final_sim['max_drawdown_pct']
+    end_cap  = final_sim['end_capital']
+    trades   = final_sim['trade_count']
+    wr       = final_sim['win_rate']
+    sign     = '+' if pnl_pct >= 0 else ''
+    pairs_str = ', '.join(strat_labels)
 
-    fig = go.Figure()
+    title = (
+        f"vbot Portfolio — {n_strats} Strategie(n) ({pairs_str}) | "
+        f"Zeitraum: {date_from} \u2192 {date_to} | "
+        f"Trades: {trades} | WR: {wr:.1f}% | "
+        f"PnL: {sign}{pnl_pct:.1f}% | "
+        f"Endkapital: {end_cap:.2f} USDT | "
+        f"MaxDD: {max_dd:.1f}%"
+    )
 
-    # Equity-Kurve
+    fig = make_subplots(specs=[[{'secondary_y': False}]])
+
+    # Startkapital-Referenzlinie
+    fig.add_hline(
+        y=capital,
+        line=dict(color='rgba(100,100,100,0.35)', width=1, dash='dash'),
+        annotation_text=f'Start {capital:.0f} USDT',
+        annotation_position='top left',
+    )
+
+    # Einzelne Strategie-Equity-Kurven im Hintergrund (aus isolierten Backtests)
+    STRAT_COLORS = [
+        '#f59e0b', '#10b981', '#8b5cf6', '#f97316',
+        '#ec4899', '#14b8a6', '#a3e635', '#fb923c',
+    ]
+    if backtest_results:
+        for idx, (fn, bt_result) in enumerate(sorted(backtest_results.items())):
+            closed = [t for t in bt_result.trades if t.result != 'open']
+            if not closed:
+                continue
+            eq   = capital
+            xs   = [str(closed[0].timestamp)]
+            ys   = [capital]
+            for t in closed:
+                eq += t.pnl_usdt
+                xs.append(str(t.timestamp))
+                ys.append(round(eq, 4))
+            r = next((x for x in all_results if x['filename'] == fn), None)
+            label   = f"{r['symbol'].split('/')[0]}/{r['timeframe']}" if r else fn
+            in_port = fn in portfolio_set
+            color   = STRAT_COLORS[idx % len(STRAT_COLORS)]
+            fig.add_trace(go.Scatter(
+                x=xs, y=ys, mode='lines',
+                name=f"{label} ({'\u2714' if in_port else '\u2014'})",
+                line=dict(color=color, width=1.5,
+                          dash='solid' if in_port else 'dot'),
+                opacity=0.7 if in_port else 0.35,
+                hovertemplate=f'{label}: %{{y:.2f}} USDT<extra></extra>',
+            ))
+
+    # Portfolio-Gesamtlinie (vordergrund, blau, fett)
     fig.add_trace(go.Scatter(
-        x=ts_vals, y=eq_vals,
-        mode='lines',
-        name='Portfolio Equity',
-        line=dict(color='#2196F3', width=2),
-        hovertemplate='%{x}<br>Kapital: %{y:.2f} USDT<extra></extra>',
+        x=eq_times, y=eq_vals,
+        mode='lines', name='Portfolio (gesamt)',
+        line=dict(color='#2563eb', width=3),
+        hovertemplate='Portfolio: %{y:.2f} USDT<extra></extra>',
     ))
 
-    # Startlinie
-    fig.add_hline(y=capital, line_dash='dash', line_color='gray', opacity=0.5,
-                  annotation_text=f'Start: {capital:.0f} USDT',
-                  annotation_position='bottom right')
-
-    # Trade-Marker (Wins / Losses)
-    trade_history = final_sim.get('trade_history', [])
-    win_ts  = [t['ts'] for t in trade_history if t['pnl'] > 0]
-    loss_ts = [t['ts'] for t in trade_history if t['pnl'] <= 0]
-
-    # Equity-Wert zum Zeitpunkt des Trades suchen
+    # Trade-Marker
     eq_map = {e['timestamp']: e['equity'] for e in equity_curve}
+    win_x, win_y   = [], []
+    loss_x, loss_y = [], []
+    for t in trade_history:
+        ts    = t['ts']
+        eq_at = eq_map.get(ts, capital)
+        if t['pnl'] > 0:
+            win_x.append(str(ts));  win_y.append(eq_at)
+        else:
+            loss_x.append(str(ts)); loss_y.append(eq_at)
 
-    if win_ts:
+    if win_x:
         fig.add_trace(go.Scatter(
-            x=win_ts,
-            y=[eq_map.get(t, capital) for t in win_ts],
-            mode='markers',
-            name='TP',
-            marker=dict(symbol='circle', color='#4CAF50', size=6),
-            hovertemplate='TP: %{x}<extra></extra>',
+            x=win_x, y=win_y, mode='markers',
+            marker=dict(color='#22d3ee', symbol='circle', size=8,
+                        line=dict(width=1, color='#0e7490')),
+            name='TP \u2713',
         ))
-    if loss_ts:
+    if loss_x:
         fig.add_trace(go.Scatter(
-            x=loss_ts,
-            y=[eq_map.get(t, capital) for t in loss_ts],
-            mode='markers',
-            name='SL',
-            marker=dict(symbol='x', color='#F44336', size=6),
-            hovertemplate='SL: %{x}<extra></extra>',
+            x=loss_x, y=loss_y, mode='markers',
+            marker=dict(color='#ef4444', symbol='x', size=8,
+                        line=dict(width=2, color='#7f1d1d')),
+            name='SL \u2717',
         ))
-
-    title = (f"vbot Portfolio | {', '.join(strat_labels)}<br>"
-             f"<sup>{date_from} → {date_to} | "
-             f"PnL: {sign}{pnl_pct:.2f}% | MaxDD: {max_dd:.1f}% | "
-             f"Endkapital: {end_cap:.2f} USDT</sup>")
 
     fig.update_layout(
-        title=dict(text=title, font=dict(size=14)),
-        xaxis=dict(title='Datum', rangeslider=dict(visible=True)),
-        yaxis=dict(title='Kapital (USDT)'),
-        legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='right', x=1),
+        title=dict(text=title, font=dict(size=12), x=0.5, xanchor='center'),
+        height=600,
+        hovermode='x unified',
         template='plotly_dark',
-        height=550,
+        dragmode='zoom',
+        xaxis=dict(rangeslider=dict(visible=True), fixedrange=False),
+        yaxis=dict(title='Equity (USDT)', fixedrange=False),
+        legend=dict(orientation='h', yanchor='bottom', y=1.02,
+                    xanchor='center', x=0.5),
+        margin=dict(l=60, r=60, t=80, b=40),
     )
 
     os.makedirs(os.path.join(PROJECT_ROOT, 'artifacts', 'charts'), exist_ok=True)
     out_file = os.path.join(PROJECT_ROOT, 'artifacts', 'charts', 'vbot_portfolio_equity.html')
-    fig.write_html(out_file, include_plotlyjs='cdn')
+    fig.write_html(out_file)
     print(f"  {GREEN}Chart gespeichert: {out_file}{NC}")
 
     # Telegram
@@ -441,10 +490,12 @@ def _generate_portfolio_chart(final_sim: dict, all_results: list, portfolio_file
 
     if bot_token and chat_id:
         from vbot.utils.telegram import send_document
-        caption = (f"vbot Portfolio Chart | {n_strats} Strategie(n) | "
-                   f"{date_from} → {date_to} | "
-                   f"PnL: {sign}{pnl_pct:.2f}% | MaxDD: {max_dd:.1f}% | "
-                   f"Endkap: {end_cap:.2f} USDT")
+        caption = (
+            f"vbot Portfolio Chart | {n_strats} Strategie(n) | "
+            f"{date_from} \u2192 {date_to} | "
+            f"PnL: {sign}{pnl_pct:.1f}% | MaxDD: {max_dd:.1f}% | "
+            f"Endkap: {end_cap:.2f} USDT"
+        )
         send_document(bot_token, chat_id, out_file, caption=caption)
         print(f"  {GREEN}Chart via Telegram gesendet.{NC}")
     else:
