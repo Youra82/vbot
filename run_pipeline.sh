@@ -74,6 +74,9 @@ else
     MIN_WR=0
 fi
 
+read -p "Max R:R-Verhaeltnis (z.B. 10 = max 1:10; 0 = deaktiviert) [Standard: 10]: " MAX_RR
+MAX_RR="${MAX_RR:-10}"
+
 for symbol in $SYMBOLS; do
     for timeframe in $TIMEFRAMES; do
 
@@ -107,7 +110,8 @@ for symbol in $SYMBOLS; do
             --trials "$N_TRIALS" \
             --jobs "$N_JOBS" \
             --max-dd "$MAX_DD" \
-            --min-wr "$MIN_WR"
+            --min-wr "$MIN_WR" \
+            --max-rr "$MAX_RR"
 
         if [ $? -ne 0 ]; then
             echo -e "${RED}Fehler im Optimierer fuer $symbol ($timeframe). Ueberspringe...${NC}"

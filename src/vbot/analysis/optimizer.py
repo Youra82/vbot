@@ -102,7 +102,7 @@ def _get_capital_ranges(capital: float, max_dd: float = 30.0) -> dict:
 # Objective fuer Optuna
 # ---------------------------------------------------------------------------
 
-def _make_objective(df, symbol, timeframe, capital, max_dd, min_wr, _stats: list):
+def _make_objective(df, symbol, timeframe, capital, max_dd, min_wr, max_rr, _stats: list):
     ranges     = _get_capital_ranges(capital, max_dd)
     r_min, r_max, r_step = ranges["risk_per_trade_pct"]
     lev_min, lev_max     = ranges["leverage"]
@@ -167,6 +167,8 @@ def _make_objective(df, symbol, timeframe, capital, max_dd, min_wr, _stats: list
             if r_train.max_drawdown_pct < _stats[4]:
                 _stats[4] = r_train.max_drawdown_pct
             return -999.0
+        if max_rr > 0 and r_train.avg_rr > max_rr:
+            return -999.0
 
         # ── Schritt 2: Walk-Forward Test (Out-of-Sample) ──────────────────
         try:
@@ -183,6 +185,8 @@ def _make_objective(df, symbol, timeframe, capital, max_dd, min_wr, _stats: list
         if r_test.pnl_pct <= 0:
             return -999.0
         if r_test.win_rate < min_wr:
+            return -999.0
+        if max_rr > 0 and r_test.avg_rr > max_rr:
             return -999.0
 
         # ── Score: log-PnL + gecapptes R:R + Trade-Bonus ─────────────────
@@ -210,6 +214,7 @@ def optimize(symbol: str, timeframe: str,
              n_trials: int = 200,
              max_dd: float = 30.0,
              min_wr: float = 0.0,
+             max_rr: float = 10.0,
              n_jobs: int = 1) -> dict | None:
     """
     Laedt Daten, optimiert Parameter mit Optuna und gibt die beste Config zurueck.
@@ -222,6 +227,7 @@ def optimize(symbol: str, timeframe: str,
     print(f"    risk_per_trade_pct : {r[0]:.1f} - {r[1]:.1f}%")
     print(f"    leverage           : {l[0]} - {l[1]}x")
     print(f"    max effective risk : {m:.1f}%  (aus max_dd={max_dd:.0f}%: nach ~30 Verlusten <= {max_dd:.0f}% DD)")
+    print(f"    max R:R            : 1:{max_rr:.0f}  (harter Limit; 0 = deaktiviert)")
     print(f"    min trades         : {_min_trades(timeframe)}  (Timeframe: {timeframe})")
 
     print(f"\n  Lade Daten: {symbol} ({timeframe}) [{start_date} -> {end_date}]")
@@ -244,7 +250,7 @@ def optimize(symbol: str, timeframe: str,
 
     # _stats: [max_trades_seen, reserved, n_too_few_trades, n_high_dd, best_dd_seen]
     _stats = [0, 0, 0, 0, float('inf')]
-    objective = _make_objective(df, symbol, timeframe, capital, max_dd, min_wr, _stats)
+    objective = _make_objective(df, symbol, timeframe, capital, max_dd, min_wr, max_rr, _stats)
     cores_str = "alle Kerne" if n_jobs == -1 else f"{n_jobs} Kern(e)"
     print(f"  Optimiere {n_trials} Trials ({cores_str})...")
     study.optimize(objective, n_trials=n_trials, show_progress_bar=True, n_jobs=n_jobs)
@@ -360,6 +366,8 @@ if __name__ == "__main__":
                         help="Max erlaubter Drawdown %% (Standard: 30)")
     parser.add_argument('--min-wr',   type=float, default=0.0,
                         help="Min Win-Rate %% (Standard: 0)")
+    parser.add_argument('--max-rr',   type=float, default=10.0,
+                        help="Max erlaubtes R:R-Verhaeltnis (Standard: 10; 0 = deaktiviert)")
     parser.add_argument('--jobs',     type=int,   default=1,
                         help="CPU-Kerne fuer Parallelisierung (Standard: 1)")
     args = parser.parse_args()
@@ -392,13 +400,13 @@ if __name__ == "__main__":
             print(f"{BOLD}Optimiere: {symbol} ({timeframe}){NC}")
             print(f"  Zeitraum: {start_date} -> {end_date}")
             print(f"  Trials:   {args.trials}  |  Kapital: {args.capital}  |  "
-                  f"Max-DD: {args.max_dd}%  |  Min-WR: {args.min_wr}%")
+                  f"Max-DD: {args.max_dd}%  |  Min-WR: {args.min_wr}%  |  Max-RR: 1:{args.max_rr:.0f}")
 
             best_config = optimize(
                 symbol, timeframe, start_date, end_date,
                 capital=args.capital, n_trials=args.trials,
                 max_dd=args.max_dd, min_wr=args.min_wr,
-                n_jobs=args.jobs
+                max_rr=args.max_rr, n_jobs=args.jobs
             )
 
             if best_config is None:
