@@ -127,7 +127,7 @@ def run_portfolio_simulation(start_capital: float,
                         price_diff = -price_diff
                     notional  = pos['contracts'] * pos['entry']
                     fees      = notional * FEE_PCT * 2
-                    pnl_usdt  = price_diff * pos['contracts'] * pos['leverage'] - fees
+                    pnl_usdt  = price_diff * pos['contracts'] - fees
                     equity   += pnl_usdt
                     if hit_tp:
                         wins += 1
