@@ -1,8 +1,8 @@
 # src/vbot/analysis/portfolio_simulator.py
 # Chronologische Portfolio-Simulation fuer mehrere vbot-Strategien.
 #
-# Alle Strategien laufen auf einem gemeinsamen Kapital.
-# Jede Strategie haelt max. eine Position gleichzeitig (single-position Model).
+# Kapital wird gleichmaessig auf die Strategien aufgeteilt.
+# Jede Strategie laeuft unabhaengig auf ihrem eigenen Kapital-Slice.
 # SL/TP werden bar-fuer-bar geprueft.
 
 import os
@@ -24,6 +24,9 @@ def run_portfolio_simulation(start_capital: float,
     """
     Chronologische Portfolio-Simulation fuer mehrere vbot Fibonacci-Strategien.
 
+    Kapital-Aufteilung: start_capital / n_strategien pro Strategie.
+    Jede Strategie rechnet unabhaengig — kein Overflows durch Cross-Compounding.
+
     strategies_data: {
         filename: {
             'symbol':    str,
@@ -32,10 +35,6 @@ def run_portfolio_simulation(start_capital: float,
             'config':    dict
         }
     }
-
-    Gibt zurueck:
-      end_capital, total_pnl_pct, max_drawdown_pct, trade_count,
-      win_rate, equity_curve
     """
     from vbot.strategy.fibo_logic import get_fibo_signal
 
@@ -53,6 +52,9 @@ def run_portfolio_simulation(start_capital: float,
 
     if not processed:
         return None
+
+    n_strats      = len(processed)
+    capital_slice = start_capital / n_strats  # pro Strategie
 
     # Precompute signals fuer jede Strategie
     for fname, strat in processed.items():
@@ -77,7 +79,9 @@ def run_portfolio_simulation(start_capital: float,
                 'tp_price':    sig.get('tp_price'),
                 'fibo_level':  sig.get('fibo_level'),
             })
-        strat['signals'] = signals
+        strat['signals']  = signals
+        strat['equity']   = float(capital_slice)   # eigener Kapital-Topf
+        strat['peak_eq']  = float(capital_slice)
 
     # Gemeinsamen Zeitstrahl aufbauen
     all_ts: set = set()
@@ -86,12 +90,10 @@ def run_portfolio_simulation(start_capital: float,
     sorted_ts = sorted(all_ts)
 
     # Simulation
-    equity       = float(start_capital)
-    peak_equity  = equity
-    max_dd_pct   = 0.0
-    equity_curve = []
-    wins = losses = 0
-    open_positions = {}  # fname -> {entry, sl, tp, contracts, leverage, direction, ts_open, fibo_level}
+    max_dd_pct     = 0.0
+    equity_curve   = []
+    wins = losses  = 0
+    open_positions = {}   # fname -> position-dict
     trade_history  = []
 
     for ts in sorted_ts:
@@ -101,7 +103,7 @@ def run_portfolio_simulation(start_capital: float,
             df    = strat['df']
             if ts not in df.index:
                 continue
-            pos = open_positions[fname]
+            pos  = open_positions[fname]
             row  = df.loc[ts]
             high = float(row['high'])
             low  = float(row['low'])
@@ -125,7 +127,11 @@ def run_portfolio_simulation(start_capital: float,
                 notional  = pos['contracts'] * pos['entry']
                 fees      = notional * FEE_PCT * 2
                 pnl_usdt  = price_diff * pos['contracts'] * pos['leverage'] - fees
-                equity   += pnl_usdt
+
+                strat['equity'] += pnl_usdt
+                if strat['equity'] > strat['peak_eq']:
+                    strat['peak_eq'] = strat['equity']
+
                 if hit_tp:
                     wins += 1
                 else:
@@ -144,6 +150,8 @@ def run_portfolio_simulation(start_capital: float,
         # 2. Neue Signale pruefen
         for fname, strat in processed.items():
             if fname in open_positions:
+                continue
+            if strat['equity'] <= 0:
                 continue
             df = strat['df']
             if ts not in df.index:
@@ -168,7 +176,7 @@ def run_portfolio_simulation(start_capital: float,
             if sl_dist <= 0:
                 continue
 
-            risk_amount = equity * risk_pct / 100.0
+            risk_amount = strat['equity'] * risk_pct / 100.0
             contracts   = risk_amount / sl_dist
             notional    = contracts * entry_price
 
@@ -186,23 +194,26 @@ def run_portfolio_simulation(start_capital: float,
                 'fibo_level': sig.get('fibo_level'),
             }
 
-        # 3. Equity tracken
-        equity_curve.append({'timestamp': ts, 'equity': equity})
-        dd = (peak_equity - equity) / peak_equity * 100 if peak_equity > 0 else 0.0
-        if equity > peak_equity:
-            peak_equity = equity
+        # 3. Gesamt-Equity tracken (Summe aller Strategie-Toepfe)
+        total_equity = sum(s['equity'] for s in processed.values())
+        equity_curve.append({'timestamp': ts, 'equity': total_equity})
+
+        # Drawdown auf Gesamt-Equity
+        peak_total = sum(s['peak_eq'] for s in processed.values())
+        dd = (peak_total - total_equity) / peak_total * 100 if peak_total > 0 else 0.0
         if dd > max_dd_pct:
             max_dd_pct = dd
 
-        if equity <= 0:
+        if total_equity <= 0:
             break
 
+    total_equity = sum(s['equity'] for s in processed.values())
     total_trades = wins + losses
     win_rate     = wins / total_trades * 100 if total_trades else 0.0
-    pnl_pct      = (equity - start_capital) / start_capital * 100
+    pnl_pct      = (total_equity - start_capital) / start_capital * 100
 
     return {
-        'end_capital':      round(equity, 2),
+        'end_capital':      round(total_equity, 2),
         'total_pnl_pct':    round(pnl_pct, 2),
         'max_drawdown_pct': round(max_dd_pct, 2),
         'trade_count':      total_trades,
