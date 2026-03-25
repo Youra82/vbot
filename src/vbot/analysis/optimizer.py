@@ -218,22 +218,23 @@ def optimize(symbol: str, timeframe: str,
     r      = ranges["risk_per_trade_pct"]
     l      = ranges["leverage"]
     m      = ranges["max_effective_risk"]
-    split_idx  = max(50, int(len(df) * _WFV_TRAIN_RATIO)) if not df.empty else 0
-    n_train    = split_idx
-    n_test     = max(0, len(df) - split_idx)
     print(f"\n  Parameter-Ranges (Kapital: {capital:.0f} USDT, Max-DD: {max_dd:.0f}%):")
     print(f"    risk_per_trade_pct : {r[0]:.1f} - {r[1]:.1f}%")
     print(f"    leverage           : {l[0]} - {l[1]}x")
     print(f"    max effective risk : {m:.1f}%  (aus max_dd={max_dd:.0f}%: nach ~30 Verlusten <= {max_dd:.0f}% DD)")
     print(f"    min trades         : {_min_trades(timeframe)}  (Timeframe: {timeframe})")
-    print(f"    Walk-Forward       : {n_train} Kerzen Training / {n_test} Kerzen Test (70/30)")
 
     print(f"\n  Lade Daten: {symbol} ({timeframe}) [{start_date} -> {end_date}]")
     df = load_ohlcv(symbol, timeframe, start_date, end_date)
     if df.empty or len(df) < 50:
         print(f"  FEHLER: Nicht genug Daten ({len(df)} Kerzen). Uebersprungen.")
         return None
+
+    split_idx = max(50, int(len(df) * _WFV_TRAIN_RATIO))
+    n_train   = split_idx
+    n_test    = len(df) - split_idx
     print(f"  {len(df)} Kerzen geladen.")
+    print(f"    Walk-Forward       : {n_train} Kerzen Training / {n_test} Kerzen Test (70/30)")
 
     study = optuna.create_study(
         direction="maximize",
