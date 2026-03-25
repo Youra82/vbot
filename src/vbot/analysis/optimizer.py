@@ -32,13 +32,18 @@ logger = logging.getLogger(__name__)
 
 CONFIGS_DIR = os.path.join(PROJECT_ROOT, 'src', 'vbot', 'strategy', 'configs')
 
-# Minimale Trades pro Timeframe
+# Minimale Trades pro Timeframe (gesamt; WFV prueft anteilig)
 _TF_MIN_TRADES = {
-    "1m": 150, "3m": 120, "5m": 100, "15m": 80,
-    "30m": 60, "1h": 40, "2h": 30,
-    "4h": 20, "6h": 15, "8h": 15, "12h": 10,
-    "1d": 8, "3d": 6, "1w": 4,
+    "1m": 200, "3m": 150, "5m": 120, "15m": 100,
+    "30m": 80,  "1h": 60,  "2h": 40,
+    "4h": 30,  "6h": 20,  "8h": 20,  "12h": 15,
+    "1d": 20,  "3d": 10,  "1w": 6,
 }
+
+# Walk-Forward-Split: 70% Training, 30% Test
+_WFV_TRAIN_RATIO = 0.70
+# R:R-Cap im Score (verhindert dass unrealistische 1:30+ dominieren)
+_RR_SCORE_CAP    = 20.0
 
 
 def _min_trades(timeframe: str) -> int:
@@ -107,6 +112,13 @@ def _make_objective(df, symbol, timeframe, capital, max_dd, min_wr, _stats: list
     lev_max_safe = max(lev_min, int(max_eff_risk / r_min))
     lev_max      = min(lev_max, lev_max_safe)
 
+    # Walk-Forward Split: Training (70%) / Test (30%)
+    split_idx  = max(50, int(len(df) * _WFV_TRAIN_RATIO))
+    df_train   = df.iloc[:split_idx]
+    df_test    = df.iloc[split_idx:]
+    min_train  = max(3, int(min_trades_needed * _WFV_TRAIN_RATIO))
+    min_test   = max(2, int(min_trades_needed * (1 - _WFV_TRAIN_RATIO)))
+
     def _objective(trial: optuna.Trial) -> float:
         leverage = trial.suggest_int("leverage", lev_min, lev_max)
         risk_pct_max = min(r_max, max(r_min, max_eff_risk / leverage))
@@ -115,23 +127,18 @@ def _make_objective(df, symbol, timeframe, capital, max_dd, min_wr, _stats: list
         config = {
             "market": {"symbol": symbol, "timeframe": timeframe},
             "signal": {
-                # Fibonacci TP-Level: welches Retracement-Niveau wird als TP angesteuert
                 "fibo_tp_level":         trial.suggest_categorical(
                     "fibo_tp_level", [0.236, 0.382, 0.5, 0.618, 0.786]
                 ),
-                # Kerzenkörper-Filter (Doji-Filterung)
                 "min_candle_body_pct":   trial.suggest_float(
                     "min_candle_body_pct", 0.1, 0.7, step=0.1
                 ),
-                # Mindest-Kerzrange relativ zum Preis
                 "min_candle_range_pct":  trial.suggest_float(
                     "min_candle_range_pct", 0.1, 1.0, step=0.1
                 ),
-                # SL-Buffer ueber/unter Kerzenhoch/-tief
                 "sl_buffer_pct":         trial.suggest_float(
                     "sl_buffer_pct", 0.05, 0.5, step=0.05
                 ),
-                # Trend-Bestaetigung: Anzahl Kerzen zurueck (0 = deaktiviert)
                 "confirm_overlap_window": trial.suggest_int(
                     "confirm_overlap_window", 0, 5
                 ),
@@ -143,29 +150,52 @@ def _make_objective(df, symbol, timeframe, capital, max_dd, min_wr, _stats: list
             }
         }
 
+        # ── Schritt 1: Training-Backtest ──────────────────────────────────
         try:
-            result = run_backtest(df, config, capital, symbol, timeframe)
+            r_train = run_backtest(df_train, config, capital, symbol, timeframe)
         except Exception:
             return -999.0
 
-        # Diagnose: max Trades tracken
-        if result.total_trades > _stats[0]:
-            _stats[0] = result.total_trades
+        if r_train.total_trades > _stats[0]:
+            _stats[0] = r_train.total_trades
 
-        if result.total_trades < min_trades_needed:
+        if r_train.total_trades < min_train:
             _stats[2] += 1
             return -999.0
-        if result.max_drawdown_pct > max_dd:
+        if r_train.max_drawdown_pct > max_dd:
             _stats[3] += 1
-            if result.max_drawdown_pct < _stats[4]:
-                _stats[4] = result.max_drawdown_pct
-            return -999.0
-        if result.win_rate < min_wr:
+            if r_train.max_drawdown_pct < _stats[4]:
+                _stats[4] = r_train.max_drawdown_pct
             return -999.0
 
-        # Score: Profit + R:R-Qualitaet + Trade-Haeufigkeit
-        trade_bonus = math.log1p(result.total_trades) * 10.0
-        return result.pnl_pct + result.avg_rr * 5.0 + trade_bonus
+        # ── Schritt 2: Walk-Forward Test (Out-of-Sample) ──────────────────
+        try:
+            r_test = run_backtest(df_test, config, capital, symbol, timeframe)
+        except Exception:
+            return -999.0
+
+        # Out-of-Sample muss profitabel sein und Constraints erfuellen
+        if r_test.total_trades < min_test:
+            return -999.0
+        if r_test.max_drawdown_pct > max_dd:
+            _stats[3] += 1
+            return -999.0
+        if r_test.pnl_pct <= 0:
+            return -999.0
+        if r_test.win_rate < min_wr:
+            return -999.0
+
+        # ── Score: log-PnL + gecapptes R:R + Trade-Bonus ─────────────────
+        # log1p verhindert dass Millionen-PnL den Score dominieren
+        train_score = math.log1p(max(0.0, r_train.pnl_pct))
+        test_score  = math.log1p(max(0.0, r_test.pnl_pct))
+        # 70% Gewicht auf Out-of-Sample
+        pnl_score   = train_score * 0.30 + test_score * 0.70
+        # R:R auf 20 deckeln (1:31 ist live nicht reproduzierbar)
+        rr_bonus    = min(r_test.avg_rr, _RR_SCORE_CAP) * 0.5
+        trade_bonus = math.log1p(r_test.total_trades) * 2.0
+
+        return pnl_score + rr_bonus + trade_bonus
 
     return _objective
 
@@ -188,11 +218,15 @@ def optimize(symbol: str, timeframe: str,
     r      = ranges["risk_per_trade_pct"]
     l      = ranges["leverage"]
     m      = ranges["max_effective_risk"]
+    split_idx  = max(50, int(len(df) * _WFV_TRAIN_RATIO)) if not df.empty else 0
+    n_train    = split_idx
+    n_test     = max(0, len(df) - split_idx)
     print(f"\n  Parameter-Ranges (Kapital: {capital:.0f} USDT, Max-DD: {max_dd:.0f}%):")
     print(f"    risk_per_trade_pct : {r[0]:.1f} - {r[1]:.1f}%")
     print(f"    leverage           : {l[0]} - {l[1]}x")
     print(f"    max effective risk : {m:.1f}%  (aus max_dd={max_dd:.0f}%: nach ~30 Verlusten <= {max_dd:.0f}% DD)")
     print(f"    min trades         : {_min_trades(timeframe)}  (Timeframe: {timeframe})")
+    print(f"    Walk-Forward       : {n_train} Kerzen Training / {n_test} Kerzen Test (70/30)")
 
     print(f"\n  Lade Daten: {symbol} ({timeframe}) [{start_date} -> {end_date}]")
     df = load_ohlcv(symbol, timeframe, start_date, end_date)
@@ -250,9 +284,12 @@ def optimize(symbol: str, timeframe: str,
         }
     }
 
-    # Backtest mit bester Config fuer finale Metriken
+    # Finaler Backtest auf vollem Datensatz fuer Metriken
     try:
-        result = run_backtest(df, config, capital, symbol, timeframe)
+        result    = run_backtest(df, config, capital, symbol, timeframe)
+        # WFV Out-of-Sample Backtest fuer separate Anzeige
+        split_idx = max(50, int(len(df) * _WFV_TRAIN_RATIO))
+        r_oos     = run_backtest(df.iloc[split_idx:], config, capital, symbol, timeframe)
         config["_backtest"] = {
             "pnl_pct":      round(result.pnl_pct, 2),
             "win_rate":     round(result.win_rate, 1),
@@ -262,10 +299,17 @@ def optimize(symbol: str, timeframe: str,
             "start_date":   start_date,
             "end_date":     end_date,
             "capital":      capital,
+            "oos_pnl_pct":  round(r_oos.pnl_pct, 2),
+            "oos_win_rate": round(r_oos.win_rate, 1),
+            "oos_trades":   r_oos.total_trades,
+            "oos_max_dd":   round(r_oos.max_drawdown_pct, 2),
         }
-        print(f"  Backtest: PnL={result.pnl_pct:+.2f}%  WR={result.win_rate:.1f}%  "
+        print(f"  Gesamt:  PnL={result.pnl_pct:+.2f}%  WR={result.win_rate:.1f}%  "
               f"Trades={result.total_trades}  MaxDD={result.max_drawdown_pct:.2f}%  "
               f"Avg R:R 1:{result.avg_rr:.2f}")
+        oos_sign = '+' if r_oos.pnl_pct >= 0 else ''
+        print(f"  OOS:     PnL={oos_sign}{r_oos.pnl_pct:.2f}%  WR={r_oos.win_rate:.1f}%  "
+              f"Trades={r_oos.total_trades}  MaxDD={r_oos.max_drawdown_pct:.2f}%")
     except Exception as e:
         logger.warning(f"Finale Backtest-Berechnung fehlgeschlagen: {e}")
 
@@ -372,5 +416,11 @@ if __name__ == "__main__":
                       f"Trades: {bt['total_trades']}  "
                       f"MaxDD: {bt['max_drawdown']:.2f}%  "
                       f"Avg R:R 1:{bt['avg_rr']:.2f}")
+                if 'oos_pnl_pct' in bt:
+                    oos_color = GREEN if bt['oos_pnl_pct'] >= 0 else RED
+                    print(f"  {oos_color}OOS PnL: {bt['oos_pnl_pct']:+.2f}%{NC}  "
+                          f"WR: {bt['oos_win_rate']:.1f}%  "
+                          f"Trades: {bt['oos_trades']}  "
+                          f"MaxDD: {bt['oos_max_dd']:.2f}%")
 
     print(f"\n{BOLD}Optimierung abgeschlossen.{NC}")
