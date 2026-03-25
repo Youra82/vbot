@@ -137,6 +137,7 @@ def run_portfolio_simulation(start_capital: float,
                     losses += 1
                 trade_history.append({
                     'ts':         pos['ts_open'],
+                    'ts_close':   ts,
                     'fname':      fname,
                     'direction':  pos['direction'],
                     'entry':      pos['entry'],
