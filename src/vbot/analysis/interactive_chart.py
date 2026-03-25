@@ -446,22 +446,27 @@ def run_interactive_chart(secrets: dict):
         out_file = os.path.join(CHARTS_DIR, f"vbot_{safe}.html")
         fig.write_html(out_file)
         print(f"  Chart gespeichert: {out_file}")
-        generated.append((symbol, timeframe, out_file))
+        generated.append((symbol, timeframe, out_file, result))
 
     print(f"\n{len(generated)} Chart(s) generiert!")
-    for _, _, path in generated:
+    for _, _, path, _ in generated:
         print(f"  -> {path}")
 
     if send_tg and generated:
         tg = secrets.get('telegram', {})
         if tg.get('bot_token') and tg.get('chat_id'):
-            from vbot.utils.telegram import send_message
-            for sym, tf, path in generated:
+            from vbot.utils.telegram import send_document
+            for sym, tf, path, res in generated:
                 try:
-                    # HTML-Datei kann nicht direkt via Telegram gesendet werden (zu gross)
-                    send_message(tg['bot_token'], tg['chat_id'],
-                                 f"vbot Chart erstellt: {sym} {tf}\n{path}")
-                    print(f"  Telegram Hinweis gesendet: {sym} {tf}")
+                    sign = '+' if res.pnl_pct >= 0 else ''
+                    caption = (
+                        f"vbot Chart | {sym} {tf} | "
+                        f"Trades: {res.total_trades} | WR: {res.win_rate:.1f}% | "
+                        f"PnL: {sign}{res.pnl_pct:.1f}% | "
+                        f"MaxDD: {res.max_drawdown_pct:.1f}%"
+                    )
+                    send_document(tg['bot_token'], tg['chat_id'], path, caption=caption)
+                    print(f"  Chart via Telegram gesendet: {sym} {tf}")
                 except Exception as e:
                     print(f"  Telegram-Fehler: {e}")
         else:
