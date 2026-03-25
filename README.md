@@ -136,13 +136,25 @@ confirm_overlap_window > 0:
   → Signal nur wenn Trendrichtung mit dem erwarteten Overlap übereinstimmt
 ```
 
-### Schritt 4 — Entry
+### Schritt 4 — Entry (Trigger-Limit)
 
 ```
-Entry:  Open der aktuellen Kerze (live: Trigger-Limit 0.05%)
-SL:     Jenseits des Kerzenextrems + Buffer
-TP:     Fibonacci-Überlagerungslevel der Vorkerze
+Reihenfolge der Order-Platzierung (ltbbot-Stil):
+  1. SL-Trigger platzieren  (reduceOnly) ← zuerst, schützt immer
+  2. TP-Trigger platzieren  (reduceOnly) ← danach
+  3. Entry Trigger-Limit    (kein reduceOnly) ← zuletzt
+
+Entry:   Trigger-Limit am Close der Vorkerze
+         SHORT: trigger = close × 1.0001  (feuert beim ersten Tick)
+         LONG:  trigger = close × 0.9999
+SL:      Trigger-Market jenseits des Kerzenextrems + Buffer
+TP:      Trigger-Market am Fibonacci-Überlagerungslevel
 ```
+
+**Candle-Timeout:** Wenn der Entry-Trigger nach **einer vollen Kerzenperiode**
+nicht gefeuert hat (Kerze hat sich nicht überlagert), werden alle offenen Orders
+automatisch storniert und der State geleert. Laufende Trades (Position offen)
+werden dabei **nie angetastet**.
 
 ---
 
@@ -296,25 +308,78 @@ Richtet einen stündlichen Cron-Job ein:
 ./run_pipeline.sh
 ```
 
-Interaktives Menü:
+### Ablauf
 
 ```
-1. Symbol eingeben  (z.B. BTC/USDT:USDT)
-2. Timeframe wählen (z.B. 1h, 4h, 1d)
-3. Zeitraum festlegen (auto oder manuell)
-4. Startkapital und Optuna-Trials
-5. Modus: strict (DD ≤ 30%) oder max-profit
+╔══════════════════════════════════════════════════════╗
+║         vbot — Fibonacci Candle Overlap Pipeline     ║
+╚══════════════════════════════════════════════════════╝
+
+1. Coins eingeben       z.B.: BTC ETH XRP SOL
+2. Timeframe wählen     z.B.: 1h  4h  1d
+3. Zeitraum             'a' für Automatik  oder  JJJJ-MM-TT
+4. Startkapital         z.B.: 1000 USDT
+5. Anzahl Trials        z.B.: 200  (mehr = gründlicher, langsamer)
+6. CPU-Kerne            1 = sicher, -1 = alle Kerne
+7. Modus wählen:
+     1) Streng   — DD-Limit harte Grenze, WR-Mindest möglich
+     2) Max-Profit — Optimizer findet das globale Maximum
 ```
 
-Der Optimizer testet folgende Parameter mit Optuna (TPE):
-- `fibo_tp_level` — welches Fibonacci-Level als TP
-- `min_candle_body_pct` — Qualitätsfilter für Vorkerzen
-- `min_candle_range_pct` — Mindestgröße der Kerze
-- `sl_buffer_pct` — SL-Puffer
-- `confirm_overlap_window` — optionaler Trendfilter
-- `leverage`, `risk_per_trade_pct` — Risiko-Parameter
+### Was der Optimizer tut
 
-Ergebnis: `src/vbot/strategy/configs/config_SYMBOL_TIMEFRAME_fibo.json`
+Der Optimizer probiert mit **Optuna (TPE-Sampler)** systematisch Parameterkombinationen
+aus und backtestet jede auf historischen Daten:
+
+| Parameter | Beschreibung | Bereich |
+|---|---|---|
+| `fibo_tp_level` | Fibonacci-Level für TP | 0.236 / 0.382 / 0.5 / 0.618 / 0.786 |
+| `min_candle_body_pct` | Qualitätsfilter — filtert Doji/Spinning Tops | 0.1–0.7 |
+| `min_candle_range_pct` | Mindest-Kerzengröße (% des Preises) | 0.1–1.0% |
+| `sl_buffer_pct` | SL-Puffer jenseits des Kerzenextrems | 0.05–0.5 |
+| `confirm_overlap_window` | Optionaler Trendfilter (N Kerzen zurück) | 0–5 |
+| `leverage` | Hebel — kapital- und DD-adaptiv | 2–20x |
+| `risk_per_trade_pct` | Risiko pro Trade (% des Kapitals) | 0.5–8.0% |
+
+### Anti-Overfitting: Walk-Forward Validation (WFV)
+
+Da jeder Coin und Timeframe sich anders verhält, besteht die Gefahr dass der Optimizer
+Parameter findet, die **nur in der Vergangenheit** funktioniert haben (Overfitting).
+Der vbot bekämpft das mit mehreren Maßnahmen:
+
+```
+Datensatz (z.B. 1084 Kerzen)
+│
+├── Training   70%  (758 Kerzen)  → Optimizer findet Parameter
+└── Test (OOS) 30%  (326 Kerzen)  → Unsichtbare Validierung
+```
+
+**Regeln:**
+- Out-of-Sample (OOS) muss profitabel sein — sonst wird der Trial verworfen
+- **Score = 30% Training + 70% OOS** — der Optimizer bevorzugt robuste Parameter
+- PnL-Wert ist **logarithmiert** (`log1p`) — verhindert dass Millionen-% den Score dominieren
+- R:R im Score ist auf **1:20 gedeckelt** — unrealistische Verhältnisse (1:31 etc.) bringen keinen Vorteil
+- Mindest-Trades erhöht (1d: 20 Trades) — statistische Signifikanz
+
+**Ausgabe nach Optimierung:**
+```
+Gesamt:  PnL=+834.57%  WR=41.3%  Trades=690  MaxDD=19.31%  Avg R:R 1:4.2
+OOS:     PnL=+124.33%  WR=40.1%  Trades=198  MaxDD=11.20%
+         └── Das ist der wichtigste Wert: war der Parameter-Set auch auf
+             ungesehenen Daten profitabel?
+```
+
+> **Faustregel:** OOS-PnL ≥ 20% des Gesamt-PnL → Parameter wahrscheinlich robust.
+> OOS-PnL nahe 0 oder negativ → Vorsicht, möglicherweise noch overfitted.
+
+### Ergebnis
+
+```
+src/vbot/strategy/configs/config_BTCUSDTUSDT_1d_fibo.json
+```
+
+Eine Config wird **nur überschrieben wenn das neue Ergebnis besser ist** als das bestehende.
+Das schützt vor Verschlechterung bei wiederholten Optimierungsläufen.
 
 ---
 
@@ -326,35 +391,51 @@ Ergebnis: `src/vbot/strategy/configs/config_SYMBOL_TIMEFRAME_fibo.json`
 
 ### Modus 1 — Einzel-Analyse
 
-Alle Configs werden **isoliert** getestet. Zeigt Tabelle mit:
+Alle Configs werden **isoliert** getestet. Zeigt Tabelle mit PnL, Win-Rate,
+Max-Drawdown, R:R, genutztem Fibo-Level und Endkapital:
 
 ```
-Strategie      Trades    WR %   PnL %   MaxDD %    R:R   Fibo
-BTC/1h             42    54.7   +18.3     -12.4   1.92  0.618
-ETH/4h             28    50.0   +11.2      -8.7   1.74  0.500
-...
+  Strategie    Trades    WR %    PnL %  MaxDD %    R:R   Fibo    Endkapital
+  BTC/1d          269    42.4  2532.29    10.70   3.58  0.618       658.07 USDT
+  XRP/1d          140    45.7   817.78     4.20   2.69  0.786       229.44 USDT
+  ETH/1d          222    37.8   802.33     6.15   1.94  0.786       225.58 USDT
 ```
 
 ### Modus 2 — Manuelle Portfolio-Simulation
 
-Du wählst eine Kombination aus Configs — der Bot simuliert sie als gemeinsames Portfolio:
+Du wählst eine Kombination aus Configs — der Bot simuliert sie als **chronologisches
+gemeinsames Portfolio** (geteiltes Kapital, simultane Trades):
 
 ```
 Verfügbare Configs:
-  1) config_BTCUSDTUSDT_1h_fibo.json
-  2) config_ETHUSDTUSDT_4h_fibo.json
+  1) config_BTCUSDTUSDT_1d_fibo.json
+  2) config_ETHUSDTUSDT_1d_fibo.json
+  3) config_XRPUSDTUSDT_1d_fibo.json
   ...
 Strategien wählen (z.B. '1 3' oder 'alle'):
 ```
+
+Ausgabe: Portfolio-PnL, Max-Drawdown, Win-Rate, Endkapital.
 
 ### Modus 3 — Automatische Portfolio-Optimierung
 
 Der Bot sucht **selbst** das beste Portfolio via Greedy-Algorithmus:
 - Sortiert alle Einzelstrategien nach PnL
-- Fügt Strategie für Strategie hinzu (keine Coin-Kollisionen)
+- Fügt Strategie für Strategie hinzu (keine Coin-Kollisionen: BTC/1h + BTC/4h = blockiert)
 - Prüft nach jedem Add: Portfolio-DD ≤ `--target-max-dd`
 - Speichert Ergebnis → `artifacts/results/optimization_results.json`
 - Optionales Update von `settings.json` mit dem optimalen Portfolio
+
+### Modus 4 — Interaktive Charts
+
+Erstellt einen interaktiven **Equity-Chart** des Portfolios (HTML) und eine
+**Trade-Tabelle** (Excel) mit allen Einstiegen, Ausstiegen, PnL je Trade.
+Kann optional via Telegram gesendet werden.
+
+```
+artifacts/charts/vbot_portfolio_equity.html
+artifacts/charts/vbot_trades.xlsx
+```
 
 ---
 
