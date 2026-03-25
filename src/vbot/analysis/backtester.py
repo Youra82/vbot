@@ -220,6 +220,11 @@ def run_backtest(df: pd.DataFrame, config: dict,
         if notional < MIN_NOTIONAL_USDT:
             continue
 
+        # Margin-Pruefung: Pflichtmarge darf verfuegbares Kapital nicht uebersteigen
+        margin = notional / leverage
+        if margin > capital:
+            continue
+
         open_trade = BacktestTrade(
             bar_idx=i,
             timestamp=ts,
