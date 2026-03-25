@@ -56,12 +56,19 @@ def run_portfolio_simulation(start_capital: float,
 
     # Precompute signals fuer jede Strategie
     for fname, strat in processed.items():
-        df   = strat['df']
-        cfg  = strat['config']
+        df      = strat['df']
+        cfg     = strat['config']
         sig_cfg = cfg.get('signal', {})
 
-        signals = []
-        for i in range(2, len(df)):
+        # Gleicher Warmup wie Backtester: max(5, confirm_overlap_window + 3)
+        confirm_window = int(sig_cfg.get('confirm_overlap_window', 0))
+        warmup         = max(5, confirm_window + 3)
+
+        none_sig = {'side': None, 'entry_price': None, 'sl_price': None,
+                    'tp_price': None, 'fibo_level': None}
+
+        signals = [none_sig] * warmup
+        for i in range(warmup, len(df)):
             sig = get_fibo_signal(df.iloc[:i], sig_cfg)
             signals.append({
                 'side':        sig['side'],
@@ -70,10 +77,7 @@ def run_portfolio_simulation(start_capital: float,
                 'tp_price':    sig.get('tp_price'),
                 'fibo_level':  sig.get('fibo_level'),
             })
-        # Erste 2 Kerzen haben kein Signal
-        none_sig = {'side': None, 'entry_price': None, 'sl_price': None,
-                    'tp_price': None, 'fibo_level': None}
-        strat['signals'] = [none_sig, none_sig] + signals
+        strat['signals'] = signals
 
     # Gemeinsamen Zeitstrahl aufbauen
     all_ts: set = set()
