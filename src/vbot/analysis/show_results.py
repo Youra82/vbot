@@ -357,8 +357,8 @@ def _generate_portfolio_chart(final_sim: dict, all_results: list, portfolio_file
     trade_history = final_sim.get('trade_history', [])
     portfolio_set = set(portfolio_files)
 
-    eq_times = [str(e['timestamp']) for e in equity_curve]
-    eq_vals  = [e['equity']         for e in equity_curve]
+    eq_times = [str(e['timestamp'])[:19] for e in equity_curve]
+    eq_vals  = [e['equity']              for e in equity_curve]
 
     strat_labels = []
     for fn in portfolio_files:
@@ -405,19 +405,20 @@ def _generate_portfolio_chart(final_sim: dict, all_results: list, portfolio_file
             if not closed:
                 continue
             eq   = capital
-            xs   = [str(closed[0].timestamp)]
+            xs   = [str(closed[0].timestamp)[:19]]
             ys   = [capital]
             for t in closed:
                 eq += t.pnl_usdt
-                xs.append(str(t.timestamp))
+                xs.append(str(t.timestamp)[:19])
                 ys.append(round(eq, 4))
             r = next((x for x in all_results if x['filename'] == fn), None)
-            label   = f"{r['symbol'].split('/')[0]}/{r['timeframe']}" if r else fn
-            in_port = fn in portfolio_set
-            color   = STRAT_COLORS[idx % len(STRAT_COLORS)]
+            label    = f"{r['symbol'].split('/')[0]}/{r['timeframe']}" if r else fn
+            in_port  = fn in portfolio_set
+            color    = STRAT_COLORS[idx % len(STRAT_COLORS)]
+            port_sym = '\u2714' if in_port else '\u2014'
             fig.add_trace(go.Scatter(
                 x=xs, y=ys, mode='lines',
-                name=f"{label} ({'\u2714' if in_port else '\u2014'})",
+                name=f"{label} ({port_sym})",
                 line=dict(color=color, width=1.5,
                           dash='solid' if in_port else 'dot'),
                 opacity=0.7 if in_port else 0.35,
@@ -440,9 +441,9 @@ def _generate_portfolio_chart(final_sim: dict, all_results: list, portfolio_file
         ts    = t['ts']
         eq_at = eq_map.get(ts, capital)
         if t['pnl'] > 0:
-            win_x.append(str(ts));  win_y.append(eq_at)
+            win_x.append(str(ts)[:19]);  win_y.append(eq_at)
         else:
-            loss_x.append(str(ts)); loss_y.append(eq_at)
+            loss_x.append(str(ts)[:19]); loss_y.append(eq_at)
 
     if win_x:
         fig.add_trace(go.Scatter(
@@ -465,7 +466,7 @@ def _generate_portfolio_chart(final_sim: dict, all_results: list, portfolio_file
         hovermode='x unified',
         template='plotly_dark',
         dragmode='zoom',
-        xaxis=dict(rangeslider=dict(visible=True), fixedrange=False),
+        xaxis=dict(type='date', rangeslider=dict(visible=True), fixedrange=False),
         yaxis=dict(title='Equity (USDT)', fixedrange=False),
         legend=dict(orientation='h', yanchor='bottom', y=1.02,
                     xanchor='center', x=0.5),
@@ -474,7 +475,7 @@ def _generate_portfolio_chart(final_sim: dict, all_results: list, portfolio_file
 
     os.makedirs(os.path.join(PROJECT_ROOT, 'artifacts', 'charts'), exist_ok=True)
     out_file = os.path.join(PROJECT_ROOT, 'artifacts', 'charts', 'vbot_portfolio_equity.html')
-    fig.write_html(out_file)
+    fig.write_html(out_file, config={'scrollZoom': True})
     print(f"  {GREEN}Chart gespeichert: {out_file}{NC}")
 
     # Telegram
