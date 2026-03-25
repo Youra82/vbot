@@ -25,6 +25,15 @@ from vbot.utils.telegram import send_message
 GLOBAL_STATE_PATH = os.path.join(PROJECT_ROOT, 'artifacts', 'tracker', 'global_state.json')
 MIN_NOTIONAL_USDT = 5.0
 
+_TIMEFRAME_SECONDS = {
+    '1m': 60, '3m': 180, '5m': 300, '15m': 900, '30m': 1800,
+    '1h': 3600, '2h': 7200, '4h': 14400, '6h': 21600, '12h': 43200,
+    '1d': 86400, '3d': 259200, '1w': 604800,
+}
+
+def _timeframe_to_seconds(tf: str) -> int:
+    return _TIMEFRAME_SECONDS.get(tf, 3600)
+
 
 # ============================================================
 # Global State Management
@@ -64,6 +73,7 @@ def _empty_state() -> dict:
         'fibo_level':       None,
         'prev_candle_high': None,
         'prev_candle_low':  None,
+        'entry_order_id':   None,
     }
 
 
@@ -74,7 +84,8 @@ def is_globally_free() -> bool:
 def claim_global_state(symbol: str, timeframe: str, side: str,
                         entry_price: float, sl_price: float, tp_price: float,
                         contracts: float, fibo_level: float,
-                        prev_high: float, prev_low: float) -> bool:
+                        prev_high: float, prev_low: float,
+                        entry_order_id: str = '') -> bool:
     state = read_global_state()
     if state.get('active_symbol') is not None:
         return False
@@ -90,6 +101,7 @@ def claim_global_state(symbol: str, timeframe: str, side: str,
         'fibo_level':       fibo_level,
         'prev_candle_high': prev_high,
         'prev_candle_low':  prev_low,
+        'entry_order_id':   entry_order_id,
     })
     return True
 
@@ -167,60 +179,68 @@ def execute_signal_trade(exchange, symbol: str, timeframe: str,
         f"| Hebel: {leverage}x | Kapital: {balance:.2f} USDT | Risiko: {risk_per_trade_pct}%"
     )
 
-    try:
-        entry_order = exchange.place_market_order(symbol, entry_side, contracts,
-                                                   margin_mode=margin_mode)
-    except Exception as e:
-        logger.error(f"Entry fehlgeschlagen: {e}")
-        return False
-
-    # Tatsaechlicher Entry-Preis und Kontraktanzahl aus Order
-    entry_price = float(entry_order.get('average') or entry_order.get('price') or current_price)
-    if entry_price <= 0:
-        entry_price = current_price
-        logger.warning(f"Kein average aus Order, verwende aktuellen Kurs {entry_price}")
-
-    filled = float(entry_order.get('filled') or entry_order.get('amount') or contracts)
-    if filled <= 0:
-        filled = contracts
-
-    logger.info(
-        f"Entry-Preis: {entry_price:.6f} | SL: {sl_price:.6f} | TP: {tp_price:.6f} "
-        f"| Fibo-Level: {signal.get('fibo_level', '?')}"
-    )
-    sl_dist_pct = abs(entry_price - sl_price) / entry_price * 100
-    tp_dist_pct = abs(tp_price - entry_price) / entry_price * 100
-    rr_ratio    = tp_dist_pct / sl_dist_pct if sl_dist_pct > 0 else 0
-    logger.info(f"SL-Abstand: {sl_dist_pct:.3f}% | TP-Abstand: {tp_dist_pct:.3f}% | R:R=1:{rr_ratio:.1f}")
-
-    time.sleep(1.0)
-
-    # --- SL platzieren ---
     sl_order_side = 'sell' if side == 'long' else 'buy'
+    sl_dist_pct   = abs(current_price - sl_price) / current_price * 100
+    tp_dist_pct   = abs(tp_price - current_price) / current_price * 100
+    rr_ratio      = tp_dist_pct / sl_dist_pct if sl_dist_pct > 0 else 0
+    logger.info(
+        f"Entry: {current_price:.6f} | SL: {sl_price:.6f} (-{sl_dist_pct:.2f}%) "
+        f"| TP: {tp_price:.6f} (+{tp_dist_pct:.2f}%) | R:R=1:{rr_ratio:.1f} "
+        f"| Fibo: {signal.get('fibo_level', '?')}"
+    )
+
+    # --- 1. SL zuerst platzieren (reduceOnly) ---
     try:
-        exchange.place_trigger_market_order(symbol, sl_order_side, filled, sl_price, reduce=True)
+        exchange.place_trigger_market_order(symbol, sl_order_side, contracts, sl_price, reduce=True)
         logger.info(f"SL platziert @ {sl_price:.6f}")
     except Exception as e:
-        logger.error(f"SL konnte nicht platziert werden: {e}. Schliesse Position!")
-        try:
-            exchange.close_position(symbol)
-        except Exception as ce:
-            logger.critical(f"Konnte Position nicht schliessen: {ce}")
+        logger.error(f"SL konnte nicht platziert werden: {e}")
         return False
 
-    # --- TP platzieren ---
+    time.sleep(0.5)
+
+    # --- 2. TP platzieren (reduceOnly) ---
     try:
-        exchange.place_trigger_market_order(symbol, sl_order_side, filled, tp_price, reduce=True)
+        exchange.place_trigger_market_order(symbol, sl_order_side, contracts, tp_price, reduce=True)
         logger.info(f"TP platziert @ {tp_price:.6f}")
     except Exception as e:
-        logger.error(f"TP konnte nicht platziert werden: {e}")
+        logger.error(f"TP konnte nicht platziert werden: {e}. Raeume SL auf.")
+        exchange.cancel_all_orders_for_symbol(symbol)
+        return False
+
+    time.sleep(0.5)
+
+    # --- 3. Entry Trigger-Limit zuletzt platzieren ---
+    # Trigger minimal versetzt damit Bitget die Richtung akzeptiert.
+    # SHORT: trigger knapp ueber aktuellem Kurs (sell wenn Kurs steigt/bleibt)
+    # LONG:  trigger knapp unter aktuellem Kurs (buy wenn Kurs faellt/bleibt)
+    if side == 'short':
+        trigger_price = current_price * 1.0001
+        limit_price   = current_price * (1 - 0.0005)   # Limit etwas unter Trigger
+    else:
+        trigger_price = current_price * 0.9999
+        limit_price   = current_price * (1 + 0.0005)   # Limit etwas ueber Trigger
+
+    try:
+        entry_order    = exchange.place_trigger_limit_order(
+            symbol, entry_side, contracts, trigger_price, limit_price
+        )
+        entry_order_id = entry_order.get('id', '') if entry_order else ''
+        logger.info(f"Entry Trigger-Limit: {entry_side.upper()} @ trigger={trigger_price:.6f} limit={limit_price:.6f}")
+    except Exception as e:
+        logger.error(f"Entry Trigger fehlgeschlagen: {e}. Raeume SL/TP auf.")
+        exchange.cancel_all_orders_for_symbol(symbol)
+        return False
+
+    entry_price = current_price   # fuer Telegram und State
 
     # --- Global State beanspruchen ---
     claimed = claim_global_state(
-        symbol, timeframe, side, entry_price, sl_price, tp_price, filled,
+        symbol, timeframe, side, entry_price, sl_price, tp_price, contracts,
         signal.get('fibo_level', 0.618),
         signal.get('prev_high', 0.0),
         signal.get('prev_low', 0.0),
+        entry_order_id,
     )
     if not claimed:
         logger.warning("Global State wurde von anderem Symbol belegt. Schliesse Position.")
@@ -275,6 +295,7 @@ def check_position_status(exchange, symbol: str, timeframe: str,
     positions = exchange.fetch_open_positions(symbol)
 
     if positions:
+        # ── Trade laeuft ── SL und TP werden NICHT angefasst ──────────────
         pos      = positions[0]
         pos_side = pos.get('side', '?')
         unr_pnl  = pos.get('unrealizedPnl', 0.0)
@@ -284,6 +305,49 @@ def check_position_status(exchange, symbol: str, timeframe: str,
             f"| Entry: {entry_p} | Unrealized PnL: {unr_pnl:.2f} USDT"
         )
         return
+
+    # ── Keine offene Position ──────────────────────────────────────────────
+    # Pruefen: Entry-Trigger noch pending oder abgelaufen?
+    active_since_str = state.get('active_since')
+    if active_since_str:
+        try:
+            active_since = datetime.fromisoformat(active_since_str)
+            if active_since.tzinfo is None:
+                active_since = active_since.replace(tzinfo=timezone.utc)
+            age_seconds  = (datetime.now(timezone.utc) - active_since).total_seconds()
+            tf_seconds   = _timeframe_to_seconds(timeframe)
+
+            if age_seconds < tf_seconds:
+                # Noch innerhalb der Kerzenperiode -> Entry koennte noch feuern
+                logger.info(
+                    f"Kein Position, aber Entry-Trigger noch aktiv "
+                    f"({age_seconds/60:.0f}/{tf_seconds/60:.0f} min). Warte."
+                )
+                return
+
+            # Kerzenperiode abgelaufen -> Entry hat nicht gefeuert
+            logger.info(
+                f"Entry-Trigger fuer {symbol} abgelaufen "
+                f"({age_seconds/3600:.1f}h > {tf_seconds/3600:.1f}h Kerze). "
+                f"Storniere alle Orders und leere State."
+            )
+            try:
+                exchange.cancel_all_orders_for_symbol(symbol)
+                logger.info(f"Alle Orders fuer {symbol} storniert.")
+            except Exception as e:
+                logger.warning(f"Fehler beim Stornieren: {e}")
+
+            send_message(
+                telegram_config.get('bot_token'), telegram_config.get('chat_id'),
+                f"⏰ vbot Entry abgelaufen: {symbol} ({timeframe})\n"
+                f"Kerze hat sich nicht ueberlagert — Entry-Trigger storniert.\n"
+                f"SL @ {state.get('sl_price', '?')} | TP @ {state.get('tp_price', '?')}\n"
+                f"Warte auf naechstes Signal..."
+            )
+            clear_global_state()
+            return
+        except Exception as e:
+            logger.error(f"Fehler beim Timeout-Check: {e}")
 
     # Position nicht mehr offen -> TP oder SL wurde getroffen
     logger.info(f"Position fuer {symbol} wurde geschlossen (TP oder SL getroffen).")

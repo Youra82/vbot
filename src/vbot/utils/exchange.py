@@ -221,6 +221,31 @@ class Exchange:
             except Exception as e:
                 logger.error(f"Fehler beim Stornieren: {e}")
 
+    def place_trigger_limit_order(self, symbol: str, side: str, amount: float,
+                                   trigger_price: float, price: float,
+                                   reduce: bool = False):
+        """Entry Trigger-Limit Order (kein reduceOnly fuer Entry)."""
+        try:
+            amount_str  = self.amount_to_precision(symbol, amount)
+            trigger_str = self.price_to_precision(symbol, trigger_price)
+            price_str   = self.price_to_precision(symbol, price)
+            params = {
+                'triggerPrice': trigger_str,
+                'reduceOnly':   reduce,
+                'productType':  'USDT-FUTURES',
+                'marginCoin':   'USDT',
+                'marginMode':   'isolated',
+                'hedged':       True,
+            }
+            logger.info(f"Trigger-Limit Entry: {side.upper()} {amount_str} {symbol} "
+                        f"trigger={trigger_str} limit={price_str}")
+            return self.exchange.create_order(
+                symbol, 'limit', side, float(amount_str), float(price_str), params=params
+            )
+        except Exception as e:
+            logger.error(f"Fehler bei Trigger-Limit Entry: {e}", exc_info=True)
+            raise
+
     def close_position(self, symbol: str):
         """Schliesst eine offene Position via Market Order."""
         try:
