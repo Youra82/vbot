@@ -1,0 +1,32 @@
+{
+  "market": {
+    "symbol": "SOL/USDT:USDT",
+    "timeframe": "6h"
+  },
+  "signal": {
+    "fibo_tp_level": 0.786,
+    "min_candle_body_pct": 0.1,
+    "min_candle_range_pct": 0.2,
+    "sl_buffer_pct": 0.25,
+    "confirm_overlap_window": 0
+  },
+  "risk": {
+    "leverage": 2,
+    "risk_per_trade_pct": 0.5,
+    "margin_mode": "isolated"
+  },
+  "_backtest": {
+    "pnl_pct": 2583.17,
+    "win_rate": 40.4,
+    "total_trades": 2764,
+    "max_drawdown": 10.96,
+    "avg_rr": 1.15,
+    "start_date": "2023-03-27",
+    "end_date": "2026-03-26",
+    "capital": 15.0,
+    "oos_pnl_pct": 158.27,
+    "oos_win_rate": 34.0,
+    "oos_trades": 702,
+    "oos_max_dd": 11.36
+  }
+}

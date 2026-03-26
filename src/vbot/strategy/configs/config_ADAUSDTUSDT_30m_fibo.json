@@ -1,0 +1,32 @@
+{
+  "market": {
+    "symbol": "ADA/USDT:USDT",
+    "timeframe": "30m"
+  },
+  "signal": {
+    "fibo_tp_level": 0.786,
+    "min_candle_body_pct": 0.5,
+    "min_candle_range_pct": 1.0,
+    "sl_buffer_pct": 0.2,
+    "confirm_overlap_window": 0
+  },
+  "risk": {
+    "leverage": 2,
+    "risk_per_trade_pct": 0.5,
+    "margin_mode": "isolated"
+  },
+  "_backtest": {
+    "pnl_pct": 89.91,
+    "win_rate": 44.1,
+    "total_trades": 1956,
+    "max_drawdown": 15.33,
+    "avg_rr": 1.02,
+    "start_date": "2025-03-26",
+    "end_date": "2026-03-26",
+    "capital": 15.0,
+    "oos_pnl_pct": 20.15,
+    "oos_win_rate": 43.6,
+    "oos_trades": 523,
+    "oos_max_dd": 14.42
+  }
+}

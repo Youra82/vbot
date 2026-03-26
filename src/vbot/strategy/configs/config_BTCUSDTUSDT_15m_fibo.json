@@ -1,0 +1,32 @@
+{
+  "market": {
+    "symbol": "BTC/USDT:USDT",
+    "timeframe": "15m"
+  },
+  "signal": {
+    "fibo_tp_level": 0.618,
+    "min_candle_body_pct": 0.1,
+    "min_candle_range_pct": 0.7,
+    "sl_buffer_pct": 0.3,
+    "confirm_overlap_window": 5
+  },
+  "risk": {
+    "leverage": 2,
+    "risk_per_trade_pct": 0.5,
+    "margin_mode": "isolated"
+  },
+  "_backtest": {
+    "pnl_pct": -24.7,
+    "win_rate": 60.3,
+    "total_trades": 282,
+    "max_drawdown": 27.03,
+    "avg_rr": 0.68,
+    "start_date": "2026-01-25",
+    "end_date": "2026-03-26",
+    "capital": 15.0,
+    "oos_pnl_pct": 2.01,
+    "oos_win_rate": 80.6,
+    "oos_trades": 62,
+    "oos_max_dd": 2.92
+  }
+}
