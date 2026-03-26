@@ -35,7 +35,7 @@
         },
         "symbols_to_optimize": "auto",
         "timeframes_to_optimize": "auto",
-        "lookback_days": 180,
+        "lookback_days": "auto",
         "start_capital": 1000,
         "cpu_cores": 1,
         "num_trials": 150,
