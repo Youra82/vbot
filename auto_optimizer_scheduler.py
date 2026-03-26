@@ -165,6 +165,7 @@ def main():
         capital   = float(opt_cfg.get('start_capital',          1000))
         max_dd    = float(constraints.get('max_drawdown_pct',     30))
         min_wr    = float(constraints.get('min_win_rate_pct',      0))
+        max_rr    = float(constraints.get('max_rr',               10))
         n_trials  = int(opt_cfg.get('num_trials',                200))
         cpu_cores = int(opt_cfg.get('cpu_cores',                   1))
 
@@ -245,6 +246,7 @@ def main():
                 '--jobs',       str(cpu_cores),
                 '--max-dd',     str(max_dd),
                 '--min-wr',     str(min_wr),
+                '--max-rr',     str(max_rr),
             ]
             log.info(f"  Optimiere {sym} ({tf}) ...")
             opt_proc = subprocess.run(

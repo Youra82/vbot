@@ -83,7 +83,8 @@
     "constraints": {
       "max_drawdown_pct": 30,
       "min_win_rate_pct": 45,
-      "min_pnl_pct": 50
+      "min_pnl_pct": 50,
+      "max_rr": 10
     }
   },
   "risk": {
