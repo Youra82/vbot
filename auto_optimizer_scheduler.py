@@ -156,8 +156,6 @@ def main():
     except Exception:
         pass
 
-    send_tg = opt_cfg.get('send_telegram_on_completion', False)
-
     # In-progress Marker setzen
     open(IN_PROGRESS_FILE, 'w').close()
 
@@ -213,12 +211,11 @@ def main():
 
         pairs_str = ', '.join(f"{sym.split('/')[0]}/{tf}" for sym, tf in active_pairs)
 
-        if send_tg:
-            _telegram_send(bot_token, chat_id,
-                f"vbot Auto-Optimizer GESTARTET\n"
-                f"Paare: {pairs_str}\n"
-                f"Trials: {n_trials}\n"
-                f"Start: {start_time.strftime('%Y-%m-%d %H:%M:%S')}")
+        _telegram_send(bot_token, chat_id,
+            f"vbot Auto-Optimizer GESTARTET\n"
+            f"Paare: {pairs_str}\n"
+            f"Trials: {n_trials}\n"
+            f"Start: {start_time.strftime('%Y-%m-%d %H:%M:%S')}")
 
         # Alte Ergebnisse lesen BEVOR show_results.py sie ueberschreibt
         old_pnl = {}
@@ -285,58 +282,54 @@ def main():
         with open(LAST_RUN_FILE, 'w') as f:
             f.write(datetime.now().isoformat())
 
-        if send_tg:
-            h = int(elapsed // 3600)
-            m = int((elapsed % 3600) // 60)
-            s = int(elapsed % 60)
-            dur_str = f"{h}h {m}m {s}s" if h else f"{m}m {s}s"
-            total   = len(active_pairs)
+        h = int(elapsed // 3600)
+        m = int((elapsed % 3600) // 60)
+        s = int(elapsed % 60)
+        dur_str = f"{h}h {m}m {s}s" if h else f"{m}m {s}s"
+        total   = len(active_pairs)
 
-            lines        = [f"vbot Auto-Optimizer abgeschlossen (Dauer: {dur_str})", ""]
-            kept_lines   = []
-            failed_lines = []
+        lines        = [f"vbot Auto-Optimizer abgeschlossen (Dauer: {dur_str})", ""]
+        kept_lines   = []
+        failed_lines = []
 
-            for sym, tf in active_pairs:
-                safe     = f"{sym.replace('/', '').replace(':', '')}_{tf}"
-                fname    = f"config_{safe}_fibo.json"
-                coin     = sym.split('/')[0]
-                new_pnl_val = None
-                cfg_path = os.path.join(CONFIGS_DIR, fname)
-                if os.path.exists(cfg_path):
-                    try:
-                        with open(cfg_path) as cf:
-                            new_pnl_val = json.load(cf).get('_backtest', {}).get('pnl_pct')
-                    except Exception:
-                        pass
-                old_val = old_pnl.get(fname)
-                if f"{sym}/{tf}" in opt_failed or new_pnl_val is None:
-                    failed_lines.append(f"- {coin}/{tf}: Optimizer fehlgeschlagen")
-                elif old_val is not None and new_pnl_val <= old_val:
-                    failed_lines.append(f"- {coin}/{tf}: bestehende Config besser "
-                                        f"({old_val:.2f}% vs {new_pnl_val:.2f}%) — unveraendert")
-                else:
-                    sign = '+' if new_pnl_val >= 0 else ''
-                    kept_lines.append(f"- {coin}/{tf}: {sign}{new_pnl_val:.2f}% gespeichert")
+        for sym, tf in active_pairs:
+            safe        = f"{sym.replace('/', '').replace(':', '')}_{tf}"
+            fname       = f"config_{safe}_fibo.json"
+            coin        = sym.split('/')[0]
+            new_pnl_val = None
+            cfg_path    = os.path.join(CONFIGS_DIR, fname)
+            if os.path.exists(cfg_path):
+                try:
+                    with open(cfg_path) as cf:
+                        new_pnl_val = json.load(cf).get('_backtest', {}).get('pnl_pct')
+                except Exception:
+                    pass
+            old_val = old_pnl.get(fname)
+            if f"{sym}/{tf}" in opt_failed or new_pnl_val is None:
+                failed_lines.append(f"- {coin}/{tf}: Optimizer fehlgeschlagen")
+            elif old_val is not None and new_pnl_val <= old_val:
+                failed_lines.append(f"- {coin}/{tf}: bestehende Config besser "
+                                    f"({old_val:.2f}% vs {new_pnl_val:.2f}%) — unveraendert")
+            else:
+                sign = '+' if new_pnl_val >= 0 else ''
+                kept_lines.append(f"- {coin}/{tf}: {sign}{new_pnl_val:.2f}% gespeichert")
 
-            lines.append(f"Gespeichert ({len(kept_lines)}/{total}):")
-            lines.extend(kept_lines if kept_lines else ["  — keine Verbesserung"])
-            if failed_lines:
-                lines.append("")
-                lines.append(f"Unveraendert / Fehler ({len(failed_lines)}/{total}):")
-                lines.extend(failed_lines)
+        lines.append(f"Gespeichert ({len(kept_lines)}/{total}):")
+        lines.extend(kept_lines if kept_lines else ["  — keine Verbesserung"])
+        if failed_lines:
+            lines.append("")
+            lines.append(f"Unveraendert / Fehler ({len(failed_lines)}/{total}):")
+            lines.extend(failed_lines)
 
-            _telegram_send(bot_token, chat_id, '\n'.join(lines))
-
+        _telegram_send(bot_token, chat_id, '\n'.join(lines))
         log.info(f"Auto-Optimierung erfolgreich abgeschlossen in {elapsed / 60:.1f} min.")
 
     except subprocess.TimeoutExpired:
         log.error("Timeout: Optimierung hat zu lange gedauert (>120 min).")
-        if send_tg:
-            _telegram_send(bot_token, chat_id, "vbot Auto-Optimierung: Timeout!")
+        _telegram_send(bot_token, chat_id, "vbot Auto-Optimierung: Timeout!")
     except Exception as e:
         log.error(f"Unerwarteter Fehler: {e}", exc_info=True)
-        if send_tg:
-            _telegram_send(bot_token, chat_id, f"vbot Auto-Optimierung FEHLER: {e}")
+        _telegram_send(bot_token, chat_id, f"vbot Auto-Optimierung FEHLER: {e}")
     finally:
         if os.path.exists(IN_PROGRESS_FILE):
             os.remove(IN_PROGRESS_FILE)
