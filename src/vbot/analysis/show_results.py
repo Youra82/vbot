@@ -399,7 +399,11 @@ def _generate_portfolio_chart(final_sim: dict, all_results: list, portfolio_file
         '#66bb6a', '#ff7043', '#42a5f5', '#d4e157',
     ]
     if backtest_results:
-        for idx, (fn, bt_result) in enumerate(sorted(backtest_results.items())):
+        color_idx = 0
+        for fn in portfolio_files:
+            bt_result = backtest_results.get(fn)
+            if bt_result is None:
+                continue
             closed = [t for t in bt_result.trades if t.result != 'open']
             if not closed:
                 continue
@@ -412,7 +416,8 @@ def _generate_portfolio_chart(final_sim: dict, all_results: list, portfolio_file
                 ys.append(round(eq, 4))
             r     = next((x for x in all_results if x['filename'] == fn), None)
             label = f"{r['symbol'].split('/')[0]}/{r['timeframe']}" if r else fn
-            color = STRAT_COLORS[idx % len(STRAT_COLORS)]
+            color = STRAT_COLORS[color_idx % len(STRAT_COLORS)]
+            color_idx += 1
             fig.add_trace(go.Scatter(
                 x=xs, y=ys, mode='lines',
                 name=label,
