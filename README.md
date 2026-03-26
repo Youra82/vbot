@@ -507,6 +507,19 @@ Der `auto_optimizer_scheduler.py`:
 5. Aktualisiert `settings.json` mit dem neuen Portfolio
 6. Sendet Telegram-Summary
 
+### Manuell auslösen
+
+```bash
+# Scheduler direkt starten (prüft ob fällig, hält sich an enabled + Schedule)
+.venv/bin/python3 auto_optimizer_scheduler.py
+
+# Sofort erzwingen — ignoriert enabled und Schedule (für Tests)
+.venv/bin/python3 auto_optimizer_scheduler.py --force
+```
+
+`--force` überspringt den `enabled`-Check und den Zeitplan-Check.
+Nützlich um nach einer Konfigurationsänderung direkt zu testen, ob der Ablauf korrekt funktioniert.
+
 ---
 
 ## Tests
