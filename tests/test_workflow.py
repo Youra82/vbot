@@ -309,7 +309,12 @@ def test_place_entry_on_bitget():
 
     assert success, "Trade konnte nicht platziert werden"
     print(f"\nTrade erfolgreich platziert: {signal['side'].upper()} {symbol}")
-    print(f"Entry: {signal['entry_price']:.2f} | TP: {signal['tp_price']:.2f} | SL: {signal['sl_price']:.2f}")
+    print(f"Entry: {signal['entry_price']:.8f} | TP: {signal['tp_price']:.8f} | SL: {signal['sl_price']:.8f}")
+
+    import time
+    print("Warte 10s — bitte jetzt in Bitget schauen...")
+    time.sleep(20)
+    print("Raeume auf...")
 
     # Aufraumen: Position sofort wieder schliessen
     try:

@@ -180,48 +180,61 @@ werden dabei **nie angetastet**.
 ```json
 {
   "live_trading_settings": {
+    "max_open_positions": 1,
     "active_strategies": [
       {
         "symbol": "BTC/USDT:USDT",
-        "timeframe": "1h",
-        "leverage": 10,
+        "timeframe": "4h",
+        "leverage": 2,
         "margin_mode": "isolated",
-        "risk_per_trade_pct": 1.0,
+        "risk_per_trade_pct": 0.5,
         "active": true
       }
     ]
   },
   "optimization_settings": {
-    "enabled": false,
+    "enabled": true,
     "schedule": {
       "day_of_week": 6,
-      "hour": 3,
+      "hour": 15,
       "minute": 0,
       "interval": {
         "value": 7,
         "unit": "days"
       }
     },
-    "start_capital": 1000,
-    "max_drawdown_pct": 30,
-    "min_win_rate_pct": 0,
+    "symbols_to_optimize": "auto",
+    "timeframes_to_optimize": "auto",
     "lookback_days": "auto",
-    "send_telegram_on_completion": true
+    "start_capital": 15,
+    "cpu_cores": 1,
+    "num_trials": 150,
+    "constraints": {
+      "max_drawdown_pct": 30,
+      "min_win_rate_pct": 45,
+      "min_pnl_pct": 50,
+      "max_rr": 10
+    }
   }
 }
 ```
 
-| Feld | Standard | Erklärung |
-|---|---|---|
-| `enabled` | `false` | Auto-Optimizer ein/ausschalten |
-| `day_of_week` | `6` | Wochentag (0=Montag, 6=Sonntag) |
-| `hour` / `minute` | `3` / `0` | Uhrzeit für geplanten Lauf |
-| `interval.value/unit` | `7 days` | Mindestabstand zwischen Optimierungen |
-| `start_capital` | `1000` | Startkapital für Simulation |
-| `max_drawdown_pct` | `30` | Max. erlaubter Drawdown |
-| `min_win_rate_pct` | `0` | Min. Win-Rate (0 = kein Limit) |
-| `lookback_days` | `"auto"` | Historische Tage: `"auto"` = timeframe-abhängig (1h→365, 4h→730, 1d→1095) |
-| `send_telegram_on_completion` | `true` | Telegram-Benachrichtigung nach Optimierung |
+| Feld | Erklärung |
+|---|---|
+| `enabled` | Auto-Optimizer ein/ausschalten |
+| `day_of_week` | Wochentag (0=Montag, 6=Sonntag) |
+| `hour` / `minute` | Uhrzeit für geplanten Lauf |
+| `interval.value/unit` | Mindestabstand zwischen Optimierungen |
+| `symbols_to_optimize` | `"auto"` = aus `active_strategies` lesen, oder Liste z.B. `["BTC", "ETH"]` |
+| `timeframes_to_optimize` | `"auto"` = aus `active_strategies` lesen, oder Liste z.B. `["4h", "1d"]` |
+| `lookback_days` | `"auto"` = timeframe-abhängig (1h→365, 4h→730, 1d→1095) |
+| `start_capital` | Startkapital für Backtest-Simulation |
+| `cpu_cores` | Anzahl paralleler Optuna-Jobs (1 = sicher) |
+| `num_trials` | Anzahl Optuna-Trials pro Symbol/Timeframe |
+| `constraints.max_drawdown_pct` | Max. erlaubter Drawdown |
+| `constraints.min_win_rate_pct` | Mindest-Win-Rate |
+| `constraints.min_pnl_pct` | Mindest-PnL für gültige Config |
+| `constraints.max_rr` | Max. R:R-Verhältnis (verhindert unrealistische Werte) |
 
 ### `configs/config_BTCUSDTUSDT_1h_fibo.json` — Strategie-Parameter
 
@@ -260,19 +273,21 @@ werden dabei **nie angetastet**.
 
 ```json
 {
+  "vbot": [
+    {
+      "apiKey": "...",
+      "secret": "...",
+      "password": "..."
+    }
+  ],
   "telegram": {
     "bot_token": "...",
     "chat_id": "..."
-  },
-  "vbot": {
-    "api_key": "...",
-    "api_secret": "...",
-    "passphrase": "..."
   }
 }
 ```
 
-> Vorlage: `secret.json.template` — nie in Git committen!
+> Nie in Git committen! `secret.json` ist in `.gitignore` eingetragen.
 
 ---
 
@@ -502,10 +517,10 @@ Aktivierung in `settings.json`:
 Der `auto_optimizer_scheduler.py`:
 1. Prüft ob Optimierung fällig ist (Interval oder Wochentag/Uhrzeit)
 2. Läuft non-blocking neben dem Live-Trading
-3. Führt `optimizer.py` für alle Symbol/Timeframe-Paare aus
-4. Startet Portfolio-Finder (`show_results.py --mode 3 --auto`)
-5. Aktualisiert `settings.json` mit dem neuen Portfolio
-6. Sendet Telegram-Summary
+3. Sendet Telegram-Nachricht: Optimierung gestartet
+4. Führt `optimizer.py` für alle Symbol/Timeframe-Paare aus
+5. Config wird **nur überschrieben wenn das neue Ergebnis besser ist** — bestehende Configs bleiben erhalten
+6. Sendet Telegram-Summary mit PnL-Vergleich je Paar (neu vs. alt)
 
 ### Manuell auslösen
 
@@ -529,12 +544,12 @@ Nützlich um nach einer Konfigurationsänderung direkt zu testen, ob der Ablauf 
 ```
 
 Ausgeführte Tests:
-- `test_bullish_gives_short_signal` — Bullische Kerze → SHORT
-- `test_bearish_gives_long_signal` — Bearische Kerze → LONG
-- `test_doji_filtered_out` — Doji-Kerze erzeugt kein Signal
-- `test_fibo_level_calculation` — Fibonacci-Level-Berechnung
-- `test_backtester_runs` — Backtest läuft durch ohne Fehler
-- `test_place_entry_orders_on_bitget` — Bitget-Order-Platzierung (benötigt `secret.json`)
+- `test_fibo_signal_bullish_candle` — Bullische Kerze → SHORT Signal
+- `test_fibo_signal_bearish_candle` — Bearische Kerze → LONG Signal
+- `test_fibo_signal_doji_filtered` — Doji-Kerze erzeugt kein Signal
+- `test_fibo_all_levels` — Alle Fibonacci-Level korrekt berechnet
+- `test_backtest_runs` — Backtester läuft fehlerfrei durch
+- `test_place_entry_on_bitget` — Echter Trade auf Bitget: PEPE/USDT:USDT, Isolated, SL+TP+Entry platziert und sofort geschlossen (benötigt `secret.json`)
 
 ---
 
