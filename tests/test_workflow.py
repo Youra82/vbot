@@ -220,29 +220,30 @@ def test_backtest_runs():
         'close': closes, 'volume': volumes
     }, index=pd.date_range('2024-01-01', periods=n, freq='1h', tz='UTC'))
 
-    signal_config = {
-        'fibo_tp_level':        0.618,
-        'min_candle_body_pct':  0.3,
-        'min_candle_range_pct': 0.1,
-        'sl_buffer_pct':        0.15,
-        'confirm_overlap_window': 0,
+    config = {
+        'signal': {
+            'fibo_tp_level':        0.618,
+            'min_candle_body_pct':  0.3,
+            'min_candle_range_pct': 0.1,
+            'sl_buffer_pct':        0.15,
+            'confirm_overlap_window': 0,
+        },
+        'risk': {'leverage': 10, 'risk_per_trade_pct': 1.0},
     }
-    risk_config = {'leverage': 10, 'risk_per_trade_pct': 1.0}
 
-    results = run_backtest(data, signal_config, risk_config, start_capital=1000.0)
+    results = run_backtest(data, config, start_capital=1000.0)
 
-    assert isinstance(results, dict)
-    assert 'pnl_pct' in results
-    assert 'win_rate' in results
-    assert 'total_trades' in results
-    assert results['total_trades'] >= 0
-    assert 0.0 <= results['win_rate'] <= 100.0
+    assert hasattr(results, 'pnl_pct')
+    assert hasattr(results, 'win_rate')
+    assert hasattr(results, 'total_trades')
+    assert results.total_trades >= 0
+    assert 0.0 <= results.win_rate <= 100.0
 
     print(f"\nBacktest laeuft fehlerfrei:")
-    print(f"  Trades: {results['total_trades']}")
-    print(f"  PnL:    {results['pnl_pct']:+.2f}%")
-    print(f"  WR:     {results['win_rate']:.1f}%")
-    print(f"  MaxDD:  {results['max_drawdown_pct']:.2f}%")
+    print(f"  Trades: {results.total_trades}")
+    print(f"  PnL:    {results.pnl_pct:+.2f}%")
+    print(f"  WR:     {results.win_rate:.1f}%")
+    print(f"  MaxDD:  {results.max_drawdown_pct:.2f}%")
 
 
 # ============================================================
@@ -274,7 +275,7 @@ def test_place_entry_on_bitget():
     account = accounts[0]
     exchange = Exchange(account)
 
-    symbol    = 'BTC/USDT:USDT'
+    symbol    = 'PEPE/USDT:USDT'
     timeframe = '1h'
 
     df = exchange.fetch_recent_ohlcv(symbol, timeframe, limit=10)

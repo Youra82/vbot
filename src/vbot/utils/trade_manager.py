@@ -266,7 +266,7 @@ def execute_signal_trade(exchange, symbol: str, timeframe: str,
         f"📏 Fibo-TP:  {fibo_pct:.1f}% Overlap\n"
         f"⚙️ Hebel:    {leverage}x\n"
         f"🛡️ Risiko:   {risk_per_trade_pct:.1f}% ({risk_usdt:.2f} USDT)\n"
-        f"📦 Kontr.:   {filled:.0f}\n"
+        f"📦 Kontr.:   {contracts:.4f}\n"
         f"{'─' * 32}\n"
         f"🔍 {signal.get('reason', '')}"
     )
