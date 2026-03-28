@@ -596,6 +596,60 @@ vbot/
 
 ---
 
+## Coin & Timeframe Empfehlungen
+
+VBot ist eine **Fibonacci-Candle-Overlap-Strategie** — er berechnet die Fibonacci-Retracement-Zone innerhalb jeder Kerze und prognostiziert, wie weit die nächste Kerze in diese Zone zurückläuft (Overlap). Benötigt: Kerzen mit klar ausgeprägten Körpern (kein Doji), ausreichend Range und messbarer Trendrichtung.
+
+### Effektive Zeitspannen je Timeframe
+
+| TF | Trend-Bestätigung (20K) | ATR(14) — SL | Body-Filter | Geeignet |
+|---|---|---|---|---|
+| 15m | 5h | 3.5h | Zu viel Noise | ❌ |
+| 30m | 10h | 7h | Marginal | ⚠️ |
+| **1h** | **20h** | **14h** | **Gut** | **✅✅** |
+| **2h** | **40h** | **28h** | **Sehr gut** | **✅✅** |
+| **4h** | **80h** | **56h** | **Exzellent** | **✅✅** |
+| 6h | 120h | 84h | Gut | ✅ |
+| 1d | 20d | 14d | Wenige Trades | ⚠️ |
+
+Der Trend-Bestätigungs-Lookback von 20 Kerzen braucht mindestens 10-20h Kontext. Auf 15m sind das nur 5h — der Trend-Filter reagiert zu nervös. Ab 1h werden Candle-Overlap-Muster statistisch stabil. ATR(14) auf 4h umspannt fast 2.5 Tage — robuste SL-Kalibrierung.
+
+### Coin-Eignung
+
+| Coin | Candle-Qualität | Fibonacci-Overlap | Trend-Klarheit | Bewertung |
+|---|---|---|---|---|
+| **BTC** | Exzellent — klare Körper, wenig Dojis | Regelmäßige Overlap-Zonen | Klare Trends mit Pullbacks | ✅✅ Beste Wahl |
+| **ETH** | Exzellent — ähnlich BTC | Gute Fibonacci-Reaktionen | Klare Trendstruktur | ✅✅ Sehr gut |
+| **SOL** | Sehr gut — starke Richtungskerzen | Explosive Overlaps in Trends | Sehr klare Trends | ✅ Gut |
+| **LINK** | Gut — klare Impulse | Gute Fibonacci-Levels | Starke Trending-Phasen | ✅ Gut |
+| **AVAX** | Gut — ausgeprägter Candle-Body | Solide Overlap-Zonen | Gute Trending-Phasen | ✅ Gut |
+| **BNB** | Gut — stabile, moderierte Kerzen | Moderate Overlaps | Stabile Trends | ✅ Gut |
+| **ARB** | Gut — ETH-korreliert | Solide | Gute Trending-Phasen | ✅ Gut |
+| **LTC** | Mittel — BTC-korreliert, kleinere Ranges | Moderate Overlaps | Mittel | ⚠️ Mittel |
+| **XRP** | Mittel — viele Dojis in Ranging | Overlaps unzuverlässig | Unregelmäßig | ⚠️ Mittel |
+| **ADA** | Mittel — häufig kleine Körper | Schwache Fibonacci-Reaktionen | Träge Trends | ⚠️ Mittel |
+| **DOGE** | Schlecht — sentiment-getriebene Spike-Kerzen | Keine stabilen Overlaps | Kein messbarer Trend | ❌ Schlecht |
+| **SHIB/PEPE** | Nicht geeignet — Pump-Candles | Fibonacci irrelevant | Kein Trend | ❌❌ Nicht geeignet |
+
+### Empfohlene Kombinationen (Ranking)
+
+| Rang | Kombination | Begründung |
+|---|---|---|
+| 🥇 1 | **BTC 4h** | Klarste Candle-Körper, stärkste Fibonacci-Reaktionen, robuster ATR-SL |
+| 🥇 1 | **ETH 4h** | Ähnlich BTC, exzellente Candle-Overlap-Qualität |
+| 🥈 2 | **SOL 2h / 4h** | Explosive Overlap-Bewegungen in Bullphasen |
+| 🥈 2 | **BTC 2h** | Mehr Trades als 4h, noch ausreichende Candle-Qualität |
+| 🥉 3 | **LINK 4h** | Starke Fibonacci-Reaktionen in Trending-Phasen |
+| 4 | **AVAX 4h** | Gute Bullmarkt-Performance |
+| 4 | **BNB 4h** | Stabile, vorhersehbare Overlap-Muster |
+| ❌ | **Alles auf 15m / 30m** | Candle-Overlap auf zu kurzem TF bedeutungslos — dominiert von Noise |
+| ❌ | **DOGE / SHIB** | Keine stabilen Fibonacci-Overlaps durch Sentiment-Spikes |
+
+> **Hinweis:** Der Min-Candle-Body-Filter ist der wichtigste Qualitätsfilter. Doji-Kerzen (kleiner Körper, lange Wicks) haben keinen messbaren Overlap — diese werden korrekt verworfen. BTC und ETH liefern die wenigsten Dojis auf 4h.
+
+
+---
+
 ## Verwandte Projekte
 
 | Bot | Strategie |
