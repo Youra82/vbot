@@ -68,6 +68,7 @@ R:R:     1:2.3
 vbot/
 ├── master_runner.py                   # Cronjob-Orchestrator für Live-Trading
 ├── auto_optimizer_scheduler.py        # Auto-Optimierung im Hintergrund (Scheduler)
+├── show_leverage.py                   # Zeigt Hebel, SL, Risiko aller aktiven Strategien
 ├── show_results.sh                    # Interaktives Analyse-Menü (3 Modi)
 ├── run_pipeline.sh                    # Optuna-Optimierung für neue Configs
 ├── push_configs.sh                    # Optimierte Configs ins Repo pushen
@@ -534,6 +535,35 @@ Der `auto_optimizer_scheduler.py`:
 
 `--force` überspringt den `enabled`-Check und den Zeitplan-Check.
 Nützlich um nach einer Konfigurationsänderung direkt zu testen, ob der Ablauf korrekt funktioniert.
+
+---
+
+## Risikoparameter anzeigen
+
+```bash
+python3 show_leverage.py
+```
+
+Zeigt alle aktiven Strategien aus `settings.json` als kompakte Tabelle:
+
+```
+  Modus: Manuell (settings.json)  |  Strategien: 7
+
+  +-----------+-------+--------+---------+-----------+--------------+----------+--------------+---------+
+  | Strategie | Hebel | Risiko | Fibo TP | SL Buffer | Trend Filter | TSL Akt. | TSL Callback | PnL OOS |
+  +-----------+-------+--------+---------+-----------+--------------+----------+--------------+---------+
+  | AAVE/4h   | 2x    | 0.50%  | 0.786   | 0.05%     | aus          | kein TSL | kein TSL     | 173.5%  |
+  | BTC/2h    | 2x    | 0.50%  | 0.786   | 0.05%     | aus          | kein TSL | kein TSL     | 20.4%   |
+  +-----------+-------+--------+---------+-----------+--------------+----------+--------------+---------+
+```
+
+| Spalte | Inhalt |
+|---|---|
+| Fibo TP | Fibonacci-Level für Take Profit (aus Config) |
+| SL Buffer | Puffer über/unter das Kerzenhoch/-tief |
+| Trend Filter | Anzahl Bestätigungs-Kerzen (0 = aus) |
+| TSL Akt. / TSL Callback | kein TSL (vbot nutzt festes SL/TP) |
+| PnL OOS | Out-of-Sample PnL aus `_backtest` |
 
 ---
 
