@@ -135,15 +135,19 @@ def run_portfolio_simulation(start_capital: float,
                     wins += 1
                 else:
                     losses += 1
+                sl_dist_pct = abs(pos['entry'] - pos['sl']) / pos['entry'] * 100 if pos['entry'] else 0
                 trade_history.append({
-                    'ts':         pos['ts_open'],
-                    'ts_close':   ts,
-                    'fname':      fname,
-                    'direction':  pos['direction'],
-                    'entry':      pos['entry'],
-                    'exit':       exit_p,
-                    'pnl':        pnl_usdt,
-                    'fibo_level': pos.get('fibo_level'),
+                    'ts':          pos['ts_open'],
+                    'ts_close':    ts,
+                    'fname':       fname,
+                    'direction':   pos['direction'],
+                    'entry':       pos['entry'],
+                    'exit':        exit_p,
+                    'pnl':         pnl_usdt,
+                    'fibo_level':  pos.get('fibo_level'),
+                    'notional':    notional,
+                    'leverage':    pos.get('leverage', 1),
+                    'sl_dist_pct': sl_dist_pct,
                 })
                 del open_positions[fname]
 

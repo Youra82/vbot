@@ -578,6 +578,18 @@ def _generate_trades_excel(final_sim: dict, portfolio_files: list, capital: floa
         print(f"  {YELLOW}Keine Trades — Excel uebersprungen.{NC}")
         return
 
+    # Config-Cache: fname -> signal/risk Parameter
+    _cfg_cache = {}
+    def _get_cfg(fname):
+        if fname not in _cfg_cache:
+            cfg_path = os.path.join(CONFIGS_DIR, fname)
+            try:
+                with open(cfg_path) as cf:
+                    _cfg_cache[fname] = json.load(cf)
+            except Exception:
+                _cfg_cache[fname] = {}
+        return _cfg_cache[fname]
+
     # Zeilen aufbauen
     equity = capital
     rows   = []
@@ -591,17 +603,47 @@ def _generate_trades_excel(final_sim: dict, portfolio_files: list, capital: floa
         exit_p   = round(float(t.get('exit',       0)), 6)
         fibo_lvl = t.get('fibo_level', '')
         ergebnis = 'TP erreicht' if pnl > 0 else 'SL erreicht'
+
+        # Felder aus Trade-History (portfolio_simulator speichert sie mit)
+        notional  = t.get('notional')
+        lev       = t.get('leverage')
+        sl_dist   = t.get('sl_dist_pct')
+
+        # Fallback: aus Config nachladen
+        cfg       = _get_cfg(fname)
+        risk_cfg  = cfg.get('risk', {})
+        sig_cfg   = cfg.get('signal', {})
+        if lev is None:
+            lev = risk_cfg.get('leverage', '—')
+        sl_buf    = sig_cfg.get('sl_buffer_pct')
+        fibo_tp   = sig_cfg.get('fibo_tp_level')
+
+        lev_str   = f"{lev}x" if isinstance(lev, (int, float)) else str(lev)
+        einsatz_str = f"{notional:.4f}" if notional is not None else '—'
+        sl_parts  = []
+        if isinstance(fibo_tp, (int, float)):
+            sl_parts.append(f"Fibo {fibo_tp:.3f}")
+        if isinstance(sl_buf, (int, float)):
+            sl_parts.append(f"Buf {sl_buf:.2f}%")
+        if sl_dist is not None:
+            sl_parts.append(f"({sl_dist:.2f}%)")
+        sl_str    = ' / '.join(sl_parts) if sl_parts else '—'
+
         rows.append({
-            'Nr':            i + 1,
-            'Datum':         str(t.get('ts', ''))[:16].replace('T', ' '),
-            'Strategie':     strat,
-            'Richtung':      dir_,
-            'Fibo-Level':    fibo_lvl,
-            'Entry':         entry,
-            'Exit':          exit_p,
-            'Ergebnis':      ergebnis,
-            'PnL (USDT)':    round(pnl,    4),
-            'Kapital':       round(equity, 4),
+            'Nr':              i + 1,
+            'Datum':           str(t.get('ts', ''))[:16].replace('T', ' '),
+            'Strategie':       strat,
+            'Richtung':        dir_,
+            'Hebel':           lev_str,
+            'Einsatz (USDT)':  einsatz_str,
+            'SL-Bereich':      sl_str,
+            'TSL Akt.':        '—',
+            'TSL Callback':    '—',
+            'Entry':           entry,
+            'Exit':            exit_p,
+            'Ergebnis':        ergebnis,
+            'PnL (USDT)':      round(pnl,    4),
+            'Kapital':         round(equity, 4),
         })
 
     wb = openpyxl.Workbook()
@@ -617,7 +659,9 @@ def _generate_trades_excel(final_sim: dict, portfolio_files: list, capital: floa
         top=Side(style='thin', color='CCCCCC'),  bottom=Side(style='thin', color='CCCCCC'),
     )
     col_widths = {
-        'Nr': 5, 'Datum': 18, 'Strategie': 26, 'Richtung': 10, 'Fibo-Level': 12,
+        'Nr': 5, 'Datum': 18, 'Strategie': 26, 'Richtung': 10,
+        'Hebel': 8, 'Einsatz (USDT)': 16, 'SL-Bereich': 28,
+        'TSL Akt.': 10, 'TSL Callback': 14,
         'Entry': 14, 'Exit': 14, 'Ergebnis': 14, 'PnL (USDT)': 14, 'Kapital': 16,
     }
 
