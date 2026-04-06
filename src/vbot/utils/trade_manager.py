@@ -189,6 +189,7 @@ def execute_signal_trade(exchange, symbol: str, timeframe: str,
     )
 
     sl_order_side = 'sell' if side == 'long' else 'buy'
+    hold_side     = 'long' if side == 'long' else 'short'
     sl_dist_pct   = abs(current_price - sl_price) / current_price * 100
     tp_dist_pct   = abs(tp_price - current_price) / current_price * 100
     rr_ratio      = tp_dist_pct / sl_dist_pct if sl_dist_pct > 0 else 0
@@ -200,7 +201,8 @@ def execute_signal_trade(exchange, symbol: str, timeframe: str,
 
     # 1. SL platzieren
     try:
-        exchange.place_trigger_market_order(symbol, sl_order_side, contracts, sl_price, reduce=True)
+        exchange.place_trigger_market_order(symbol, sl_order_side, contracts, sl_price,
+                                            reduce=True, hold_side=hold_side)
         logger.info(f"SL platziert @ {sl_price:.6f}")
     except Exception as e:
         logger.error(f"SL konnte nicht platziert werden: {e}")
@@ -210,7 +212,8 @@ def execute_signal_trade(exchange, symbol: str, timeframe: str,
 
     # 2. TP platzieren
     try:
-        exchange.place_trigger_market_order(symbol, sl_order_side, contracts, tp_price, reduce=True)
+        exchange.place_trigger_market_order(symbol, sl_order_side, contracts, tp_price,
+                                            reduce=True, hold_side=hold_side)
         logger.info(f"TP platziert @ {tp_price:.6f}")
     except Exception as e:
         logger.error(f"TP konnte nicht platziert werden: {e}. Raeume SL auf.")
