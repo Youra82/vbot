@@ -477,6 +477,14 @@ Sichert `secret.json`, macht `git reset --hard origin/main`, stellt `secret.json
 
 ## Live-Trading
 
+### Manuell starten
+
+```bash
+.venv/bin/python3 master_runner.py
+```
+
+### Cron-Job
+
 Der `master_runner.py` wird stündlich via Cron ausgeführt:
 
 1. Startet `auto_optimizer_scheduler.py` non-blocking im Hintergrund

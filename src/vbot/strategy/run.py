@@ -106,7 +106,7 @@ def run_for_account(account: dict, telegram_config: dict,
                 risk_config[key] = loaded_cfg['risk'][key]
         logger.info(
             f"Config geladen: config_{safe_name}_fibo.json "
-            f"(PnL: {loaded_cfg.get('_meta', {}).get('pnl_pct', '?')}% | "
+            f"(PnL: {loaded_cfg.get('_backtest', {}).get('pnl_pct', '?')}% | "
             f"Fibo: {signal_config.get('fibo_tp_level', '?')} | "
             f"Hebel: {risk_config.get('leverage', 10)}x)"
         )
