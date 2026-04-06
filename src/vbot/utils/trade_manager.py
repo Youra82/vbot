@@ -4,9 +4,7 @@ Trade Manager fuer vbot - Fibonacci Candle Overlap.
 
 - Entry mit risiko-basierter Positionsgroesse
 - Positionsgroesse = (Kapital * risk_per_trade_pct%) / SL-Abstand (Preis)
-- SL: jenseits des Extrems der vorherigen Kerze + Buffer
-- TP: Fibonacci-Level innerhalb der vorherigen Kerze (Overlap-Ziel)
-- Global State: nur EIN Symbol darf gleichzeitig traden
+- Global State: mehrere Symbole gleichzeitig moeglich (max_open_positions)
 """
 
 import os
@@ -36,17 +34,36 @@ def _timeframe_to_seconds(tf: str) -> int:
 
 
 # ============================================================
-# Global State Management
+# Global State Management (Multi-Position)
 # ============================================================
 
 def read_global_state() -> dict:
     if not os.path.exists(GLOBAL_STATE_PATH):
-        return _empty_state()
+        return {'positions': {}}
     try:
         with open(GLOBAL_STATE_PATH, 'r') as f:
-            return json.load(f)
+            state = json.load(f)
+        # Migration: altes Single-Symbol-Format
+        if 'active_symbol' in state and 'positions' not in state:
+            sym = state.get('active_symbol')
+            if sym:
+                return {'positions': {sym: {
+                    'timeframe':       state.get('active_timeframe'),
+                    'active_since':    state.get('active_since'),
+                    'entry_price':     state.get('entry_price'),
+                    'side':            state.get('side'),
+                    'sl_price':        state.get('sl_price'),
+                    'tp_price':        state.get('tp_price'),
+                    'contracts':       state.get('contracts'),
+                    'fibo_level':      state.get('fibo_level'),
+                    'prev_candle_high': state.get('prev_candle_high'),
+                    'prev_candle_low':  state.get('prev_candle_low'),
+                    'entry_order_id':  state.get('entry_order_id'),
+                }}}
+            return {'positions': {}}
+        return state
     except (json.JSONDecodeError, OSError):
-        return _empty_state()
+        return {'positions': {}}
 
 
 def write_global_state(state: dict):
@@ -55,43 +72,53 @@ def write_global_state(state: dict):
         json.dump(state, f, indent=2)
 
 
-def clear_global_state():
-    write_global_state(_empty_state())
-    logging.getLogger(__name__).info("Global State geleert - bereit fuer neuen Trade.")
+def clear_global_state(symbol: str = None):
+    """Leert den State fuer ein bestimmtes Symbol (oder alles wenn symbol=None)."""
+    logger = logging.getLogger(__name__)
+    if symbol is None:
+        write_global_state({'positions': {}})
+        logger.info("Global State komplett geleert.")
+    else:
+        state = read_global_state()
+        state['positions'].pop(symbol, None)
+        write_global_state(state)
+        logger.info(f"Global State fuer {symbol} geleert.")
 
 
-def _empty_state() -> dict:
-    return {
-        'active_symbol':    None,
-        'active_timeframe': None,
-        'active_since':     None,
-        'entry_price':      None,
-        'side':             None,
-        'sl_price':         None,
-        'tp_price':         None,
-        'contracts':        None,
-        'fibo_level':       None,
-        'prev_candle_high': None,
-        'prev_candle_low':  None,
-        'entry_order_id':   None,
-    }
+def has_open_slot(max_positions: int) -> bool:
+    """True wenn noch ein Slot frei ist."""
+    state = read_global_state()
+    return len(state.get('positions', {})) < max_positions
+
+
+def is_symbol_active(symbol: str) -> bool:
+    """True wenn dieses Symbol bereits eine offene Position hat."""
+    state = read_global_state()
+    return symbol in state.get('positions', {})
 
 
 def is_globally_free() -> bool:
-    return read_global_state().get('active_symbol') is None
+    """Rueckwaerts-kompatibel: True wenn keine einzige Position offen."""
+    state = read_global_state()
+    return len(state.get('positions', {})) == 0
 
 
 def claim_global_state(symbol: str, timeframe: str, side: str,
                         entry_price: float, sl_price: float, tp_price: float,
                         contracts: float, fibo_level: float,
                         prev_high: float, prev_low: float,
-                        entry_order_id: str = '') -> bool:
+                        entry_order_id: str = '',
+                        max_positions: int = 1) -> bool:
     state = read_global_state()
-    if state.get('active_symbol') is not None:
-        return False
-    write_global_state({
-        'active_symbol':    symbol,
-        'active_timeframe': timeframe,
+    positions = state.get('positions', {})
+
+    if symbol in positions:
+        return False  # bereits aktiv
+    if len(positions) >= max_positions:
+        return False  # kein Slot frei
+
+    positions[symbol] = {
+        'timeframe':        timeframe,
         'active_since':     datetime.now(timezone.utc).isoformat(),
         'entry_price':      entry_price,
         'side':             side,
@@ -102,7 +129,8 @@ def claim_global_state(symbol: str, timeframe: str, side: str,
         'prev_candle_high': prev_high,
         'prev_candle_low':  prev_low,
         'entry_order_id':   entry_order_id,
-    })
+    }
+    write_global_state({'positions': positions})
     return True
 
 
@@ -113,10 +141,6 @@ def claim_global_state(symbol: str, timeframe: str, side: str,
 def calculate_contracts(balance_usdt: float, entry_price: float,
                           sl_price: float, min_amount: float,
                           risk_per_trade_pct: float = 1.0) -> float:
-    """
-    Risiko-basierte Kontraktanzahl.
-    Positionsgroesse = (balance * risk_pct%) / SL-Abstand-in-Preis
-    """
     risk_amount = balance_usdt * risk_per_trade_pct / 100.0
     sl_distance = abs(entry_price - sl_price)
     if sl_distance <= 0:
@@ -131,32 +155,18 @@ def calculate_contracts(balance_usdt: float, entry_price: float,
 
 def execute_signal_trade(exchange, symbol: str, timeframe: str,
                           signal: dict, risk_config: dict,
-                          telegram_config: dict, logger: logging.Logger) -> bool:
-    """
-    Platziert einen Fibonacci-Candle-Overlap Trade.
-
-    signal muss enthalten:
-      side         : 'long' oder 'short'
-      entry_price  : aktueller Kurs (close der letzten Kerze)
-      sl_price     : Stop Loss Preis
-      tp_price     : Take Profit Preis (Fibo-Level der vorherigen Kerze)
-      fibo_level   : genutztes Fibo-Level (z.B. 0.618)
-      prev_high    : Hoch der vorherigen Kerze
-      prev_low     : Tief der vorherigen Kerze
-      reason       : Text-Beschreibung des Signals
-    """
+                          telegram_config: dict, logger: logging.Logger,
+                          max_positions: int = 1) -> bool:
     side               = signal['side']
     leverage           = int(risk_config.get('leverage', 10))
     margin_mode        = risk_config.get('margin_mode', 'isolated')
     risk_per_trade_pct = float(risk_config.get('risk_per_trade_pct', 1.0))
 
-    # --- Kapital abrufen ---
     balance = exchange.fetch_balance_usdt()
     if balance < MIN_NOTIONAL_USDT:
         logger.warning(f"Zu wenig Kapital ({balance:.2f} USDT < {MIN_NOTIONAL_USDT} USDT). Kein Trade.")
         return False
 
-    # --- Hebel und Margin setzen ---
     exchange.set_margin_mode(symbol, margin_mode)
     exchange.set_leverage(symbol, leverage, margin_mode)
 
@@ -166,7 +176,6 @@ def execute_signal_trade(exchange, symbol: str, timeframe: str,
     sl_price      = signal['sl_price']
     tp_price      = signal['tp_price']
 
-    # --- Positionsgroesse berechnen ---
     contracts = calculate_contracts(balance, current_price, sl_price, min_amount, risk_per_trade_pct)
 
     notional = contracts * current_price
@@ -189,7 +198,7 @@ def execute_signal_trade(exchange, symbol: str, timeframe: str,
         f"| Fibo: {signal.get('fibo_level', '?')}"
     )
 
-    # --- 1. SL zuerst platzieren (reduceOnly) ---
+    # 1. SL platzieren
     try:
         exchange.place_trigger_market_order(symbol, sl_order_side, contracts, sl_price, reduce=True)
         logger.info(f"SL platziert @ {sl_price:.6f}")
@@ -199,7 +208,7 @@ def execute_signal_trade(exchange, symbol: str, timeframe: str,
 
     time.sleep(0.5)
 
-    # --- 2. TP platzieren (reduceOnly) ---
+    # 2. TP platzieren
     try:
         exchange.place_trigger_market_order(symbol, sl_order_side, contracts, tp_price, reduce=True)
         logger.info(f"TP platziert @ {tp_price:.6f}")
@@ -210,16 +219,13 @@ def execute_signal_trade(exchange, symbol: str, timeframe: str,
 
     time.sleep(0.5)
 
-    # --- 3. Entry Trigger-Limit zuletzt platzieren ---
-    # Trigger minimal versetzt damit Bitget die Richtung akzeptiert.
-    # SHORT: trigger knapp ueber aktuellem Kurs (sell wenn Kurs steigt/bleibt)
-    # LONG:  trigger knapp unter aktuellem Kurs (buy wenn Kurs faellt/bleibt)
+    # 3. Entry Trigger-Limit
     if side == 'short':
         trigger_price = current_price * 1.0001
-        limit_price   = current_price * (1 - 0.0005)   # Limit etwas unter Trigger
+        limit_price   = current_price * (1 - 0.0005)
     else:
         trigger_price = current_price * 0.9999
-        limit_price   = current_price * (1 + 0.0005)   # Limit etwas ueber Trigger
+        limit_price   = current_price * (1 + 0.0005)
 
     try:
         entry_order    = exchange.place_trigger_limit_order(
@@ -232,26 +238,26 @@ def execute_signal_trade(exchange, symbol: str, timeframe: str,
         exchange.cancel_all_orders_for_symbol(symbol)
         return False
 
-    entry_price = current_price   # fuer Telegram und State
+    entry_price = current_price
 
-    # --- Global State beanspruchen ---
+    # Global State beanspruchen
     claimed = claim_global_state(
         symbol, timeframe, side, entry_price, sl_price, tp_price, contracts,
         signal.get('fibo_level', 0.618),
         signal.get('prev_high', 0.0),
         signal.get('prev_low', 0.0),
         entry_order_id,
+        max_positions=max_positions,
     )
     if not claimed:
-        logger.warning("Global State wurde von anderem Symbol belegt. Schliesse Position.")
+        logger.warning("Global State voll oder Symbol bereits aktiv. Schliesse Orders.")
         try:
             exchange.cancel_all_orders_for_symbol(symbol)
-            exchange.close_position(symbol)
         except Exception as ce:
-            logger.error(f"Fehler beim Schliessen: {ce}")
+            logger.error(f"Fehler beim Stornieren: {ce}")
         return False
 
-    # --- Telegram-Benachrichtigung ---
+    # Telegram
     direction_emoji = "🟢" if side == 'long' else "🔴"
     risk_usdt       = balance * risk_per_trade_pct / 100.0
     fibo_pct        = signal.get('fibo_level', 0.618) * 100
@@ -282,50 +288,44 @@ def execute_signal_trade(exchange, symbol: str, timeframe: str,
 
 def check_position_status(exchange, symbol: str, timeframe: str,
                            telegram_config: dict, logger: logging.Logger):
-    """
-    Prueft ob die aktive Position noch offen ist.
-    Falls nicht mehr offen: Global State loeschen, Telegram-Nachricht senden.
-    """
-    state = read_global_state()
+    state     = read_global_state()
+    positions = state.get('positions', {})
 
-    if state.get('active_symbol') != symbol:
-        logger.debug(f"check_position_status: {symbol} ist nicht das aktive Symbol, ueberspringe.")
+    if symbol not in positions:
+        logger.debug(f"check_position_status: {symbol} nicht im State, ueberspringe.")
         return
 
-    positions = exchange.fetch_open_positions(symbol)
+    pos_state = positions[symbol]
+    open_pos  = exchange.fetch_open_positions(symbol)
 
-    if positions:
-        # ── Trade laeuft ── SL und TP werden NICHT angefasst ──────────────
-        pos      = positions[0]
+    if open_pos:
+        pos      = open_pos[0]
         pos_side = pos.get('side', '?')
         unr_pnl  = pos.get('unrealizedPnl', 0.0)
-        entry_p  = state.get('entry_price', '?')
+        entry_p  = pos_state.get('entry_price', '?')
         logger.info(
             f"Position fuer {symbol} noch offen: {pos_side.upper()} "
             f"| Entry: {entry_p} | Unrealized PnL: {unr_pnl:.2f} USDT"
         )
         return
 
-    # ── Keine offene Position ──────────────────────────────────────────────
-    # Pruefen: Entry-Trigger noch pending oder abgelaufen?
-    active_since_str = state.get('active_since')
+    # Keine offene Position — Timeout oder geschlossen?
+    active_since_str = pos_state.get('active_since')
     if active_since_str:
         try:
             active_since = datetime.fromisoformat(active_since_str)
             if active_since.tzinfo is None:
                 active_since = active_since.replace(tzinfo=timezone.utc)
-            age_seconds  = (datetime.now(timezone.utc) - active_since).total_seconds()
-            tf_seconds   = _timeframe_to_seconds(timeframe)
+            age_seconds = (datetime.now(timezone.utc) - active_since).total_seconds()
+            tf_seconds  = _timeframe_to_seconds(timeframe)
 
             if age_seconds < tf_seconds:
-                # Noch innerhalb der Kerzenperiode -> Entry koennte noch feuern
                 logger.info(
                     f"Kein Position, aber Entry-Trigger noch aktiv "
                     f"({age_seconds/60:.0f}/{tf_seconds/60:.0f} min). Warte."
                 )
                 return
 
-            # Kerzenperiode abgelaufen -> Entry hat nicht gefeuert
             logger.info(
                 f"Entry-Trigger fuer {symbol} abgelaufen "
                 f"({age_seconds/3600:.1f}h > {tf_seconds/3600:.1f}h Kerze). "
@@ -341,15 +341,15 @@ def check_position_status(exchange, symbol: str, timeframe: str,
                 telegram_config.get('bot_token'), telegram_config.get('chat_id'),
                 f"⏰ vbot Entry abgelaufen: {symbol} ({timeframe})\n"
                 f"Kerze hat sich nicht ueberlagert — Entry-Trigger storniert.\n"
-                f"SL @ {state.get('sl_price', '?')} | TP @ {state.get('tp_price', '?')}\n"
+                f"SL @ {pos_state.get('sl_price', '?')} | TP @ {pos_state.get('tp_price', '?')}\n"
                 f"Warte auf naechstes Signal..."
             )
-            clear_global_state()
+            clear_global_state(symbol)
             return
         except Exception as e:
             logger.error(f"Fehler beim Timeout-Check: {e}")
 
-    # Position nicht mehr offen -> TP oder SL wurde getroffen
+    # Position wurde geschlossen (TP oder SL getroffen)
     logger.info(f"Position fuer {symbol} wurde geschlossen (TP oder SL getroffen).")
 
     try:
@@ -358,14 +358,19 @@ def check_position_status(exchange, symbol: str, timeframe: str,
     except Exception as e:
         logger.warning(f"Fehler beim Stornieren verbleibender Orders: {e}")
 
-    entry_p  = state.get('entry_price', '?')
-    sl_p     = state.get('sl_price', '?')
-    tp_p     = state.get('tp_price', '?')
-    side_str = state.get('side', '?')
-    since    = state.get('active_since', '?')
-    fibo_lvl = state.get('fibo_level', '?')
+    entry_p  = pos_state.get('entry_price', '?')
+    sl_p     = pos_state.get('sl_price', '?')
+    tp_p     = pos_state.get('tp_price', '?')
+    side_str = pos_state.get('side', '?')
+    since    = pos_state.get('active_since', '?')
+    fibo_lvl = pos_state.get('fibo_level', '?')
 
     direction_emoji = "🟢" if side_str == 'long' else "🔴"
+    try:
+        fibo_str = f"{float(fibo_lvl)*100:.1f}% Overlap"
+    except (ValueError, TypeError):
+        fibo_str = str(fibo_lvl)
+
     msg = (
         f"✅ vbot TRADE GESCHLOSSEN\n"
         f"{'─' * 32}\n"
@@ -373,11 +378,10 @@ def check_position_status(exchange, symbol: str, timeframe: str,
         f"💰 Entry:   ${entry_p}\n"
         f"🛑 SL:      ${sl_p}\n"
         f"🎯 TP:      ${tp_p}\n"
-        f"📏 Fibo:    {float(fibo_lvl)*100:.1f}% Overlap\n"
+        f"📏 Fibo:    {fibo_str}\n"
         f"🕐 Seit:    {since}\n"
         f"{'─' * 32}\n"
         f"⏳ Warte auf naechstes Signal..."
     )
     send_message(telegram_config.get('bot_token'), telegram_config.get('chat_id'), msg)
-
-    clear_global_state()
+    clear_global_state(symbol)

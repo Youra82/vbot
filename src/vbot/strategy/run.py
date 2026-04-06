@@ -35,7 +35,8 @@ from vbot.utils.exchange import Exchange
 from vbot.utils.telegram import send_message
 from vbot.utils.guardian import guardian_decorator
 from vbot.utils.trade_manager import (
-    is_globally_free,
+    has_open_slot,
+    is_symbol_active,
     execute_signal_trade,
     check_position_status,
     read_global_state,
@@ -117,20 +118,25 @@ def run_for_account(account: dict, telegram_config: dict,
             f"Verwende Defaults aus settings.json."
         )
 
+    max_positions = settings.get('live_trading_settings', {}).get('max_open_positions', 1)
+
     if mode == 'check':
         check_position_status(exchange, symbol, timeframe, telegram_config, logger)
 
     elif mode == 'signal':
-        if not is_globally_free():
-            state = read_global_state()
+        if is_symbol_active(symbol):
+            logger.info(f"{symbol} hat bereits eine offene Position - ueberspringe.")
+            return
+
+        if not has_open_slot(max_positions):
+            state     = read_global_state()
+            aktive    = list(state.get('positions', {}).keys())
             logger.info(
-                f"Global State belegt von {state.get('active_symbol')} "
-                f"({state.get('active_timeframe')}) - ueberspringe {symbol}."
+                f"Max. {max_positions} Position(en) offen {aktive} - ueberspringe {symbol}."
             )
             return
 
         # OHLCV-Daten laden
-        # Benoetigen mindestens 3 Kerzen: confirm_window + Signalkerze + aktuelle Kerze
         confirm_window = int(signal_config.get('confirm_overlap_window', 3))
         limit = max(50, confirm_window + 10)
         df = exchange.fetch_recent_ohlcv(symbol, timeframe, limit=limit)
@@ -154,13 +160,15 @@ def run_for_account(account: dict, telegram_config: dict,
         if prev_high and prev_low and entry:
             logger.info(get_all_fibo_levels_info(prev_high, prev_low, entry))
 
-        if not is_globally_free():
-            logger.info(f"Global State gerade belegt, ueberspringe {symbol}.")
+        # nochmal pruefen (Race Condition bei parallelen Prozessen)
+        if not has_open_slot(max_positions) or is_symbol_active(symbol):
+            logger.info(f"Slot nicht mehr frei - ueberspringe {symbol}.")
             return
 
         success = execute_signal_trade(
             exchange, symbol, timeframe, signal,
-            risk_config, telegram_config, logger
+            risk_config, telegram_config, logger,
+            max_positions=max_positions,
         )
 
         if success:
