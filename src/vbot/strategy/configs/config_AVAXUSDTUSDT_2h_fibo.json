@@ -1,13 +1,13 @@
 {
   "market": {
-    "symbol": "BNB/USDT:USDT",
+    "symbol": "AVAX/USDT:USDT",
     "timeframe": "2h"
   },
   "signal": {
     "fibo_tp_level": 0.786,
     "min_candle_body_pct": 0.1,
     "min_candle_range_pct": 1.0,
-    "sl_buffer_pct": 0.05,
+    "sl_buffer_pct": 0.1,
     "confirm_overlap_window": 0
   },
   "risk": {
@@ -16,17 +16,17 @@
     "margin_mode": "isolated"
   },
   "_backtest": {
-    "pnl_pct": 45.68,
-    "win_rate": 40.3,
-    "total_trades": 2206,
-    "max_drawdown": 16.27,
-    "avg_rr": 0.99,
+    "pnl_pct": 564.8,
+    "win_rate": 41.3,
+    "total_trades": 4505,
+    "max_drawdown": 17.75,
+    "avg_rr": 1.01,
     "start_date": "2024-04-07",
     "end_date": "2026-04-07",
     "capital": 15.0,
-    "oos_pnl_pct": 20.6,
-    "oos_win_rate": 39.8,
-    "oos_trades": 636,
-    "oos_max_dd": 11.7
+    "oos_pnl_pct": 104.55,
+    "oos_win_rate": 40.7,
+    "oos_trades": 1047,
+    "oos_max_dd": 7.73
   }
 }
