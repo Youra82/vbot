@@ -183,6 +183,13 @@ def execute_signal_trade(exchange, symbol: str, timeframe: str,
         logger.warning(f"Notional {notional:.2f} USDT zu klein (< {MIN_NOTIONAL_USDT}). Kein Trade.")
         return False
 
+    # Bestehende Orders stornieren (verhindert Stacking bei erneutem Signal)
+    try:
+        exchange.cancel_all_orders_for_symbol(symbol)
+        logger.info(f"Bestehende Orders fuer {symbol} vor Trade-Platzierung storniert.")
+    except Exception as e:
+        logger.warning(f"Konnte bestehende Orders nicht stornieren: {e}")
+
     logger.info(
         f"Platziere Entry: {side.upper()} {contracts:.4f} {symbol} "
         f"| Hebel: {leverage}x | Kapital: {balance:.2f} USDT | Risiko: {risk_per_trade_pct}%"
@@ -294,12 +301,50 @@ def check_position_status(exchange, symbol: str, timeframe: str,
     state     = read_global_state()
     positions = state.get('positions', {})
 
-    if symbol not in positions:
-        logger.debug(f"check_position_status: {symbol} nicht im State, ueberspringe.")
-        return
+    # Exchange direkt pruefen — auch wenn State fehlt
+    try:
+        open_pos = exchange.fetch_open_positions(symbol)
+    except Exception as e:
+        logger.error(f"Konnte offene Positionen nicht abrufen: {e}")
+        open_pos = []
 
-    pos_state = positions[symbol]
-    open_pos  = exchange.fetch_open_positions(symbol)
+    if symbol not in positions:
+        if not open_pos:
+            logger.debug(f"check_position_status: {symbol} nicht im State und keine Position — ueberspringe.")
+            return
+        # Position auf Exchange, aber State verloren — rekonstruiere minimalen State
+        logger.warning(
+            f"{symbol}: Offene Position auf Exchange gefunden, aber kein State-Eintrag! "
+            f"Erstelle minimalen State-Eintrag aus Exchange-Daten."
+        )
+        pos_ex = open_pos[0]
+        real_entry = (pos_ex.get('entryPrice')
+                      or pos_ex.get('info', {}).get('openPriceAvg')
+                      or pos_ex.get('info', {}).get('avgOpenPrice'))
+        try:
+            entry_reconstructed = float(real_entry) if real_entry else 0.0
+        except (ValueError, TypeError):
+            entry_reconstructed = 0.0
+        pos_state = {
+            'side':           pos_ex.get('side', 'long'),
+            'entry_price':    entry_reconstructed,
+            'contracts':      float(pos_ex.get('contracts') or 0),
+            'sl_price':       None,  # Nicht rekonstruierbar
+            'tp_price':       None,  # Nicht rekonstruierbar
+            'timeframe':      timeframe,
+            'active_since':   datetime.now(timezone.utc).isoformat(),
+        }
+        # State schreiben damit naechste Phase den Eintrag findet
+        positions[symbol] = pos_state
+        write_global_state({'positions': positions})
+        send_message(
+            telegram_config.get('bot_token'), telegram_config.get('chat_id'),
+            f"⚠️ vbot: State fuer {symbol} war verloren!\n"
+            f"Position auf Exchange gefunden und rekonstruiert.\n"
+            f"SL/TP-Preise unbekannt — bitte manuell pruefen!"
+        )
+    else:
+        pos_state = positions[symbol]
 
     if open_pos:
         pos      = open_pos[0]
@@ -364,6 +409,8 @@ def check_position_status(exchange, symbol: str, timeframe: str,
                         logger.info(f"SL repariert @ {sl_price_val}")
                     except Exception as e:
                         logger.error(f"SL-Reparatur fehlgeschlagen: {e}")
+                elif not sl_exists and not sl_price_val:
+                    logger.error(f"SL fehlt fuer {symbol} aber SL-Preis unbekannt (State rekonstruiert). Manuelle Intervention noetig!")
 
                 if not tp_exists and tp_price_val and contracts > 0:
                     try:
@@ -374,6 +421,8 @@ def check_position_status(exchange, symbol: str, timeframe: str,
                         logger.info(f"TP repariert @ {tp_price_val}")
                     except Exception as e:
                         logger.error(f"TP-Reparatur fehlgeschlagen: {e}")
+                elif not tp_exists and not tp_price_val:
+                    logger.error(f"TP fehlt fuer {symbol} aber TP-Preis unbekannt (State rekonstruiert). Manuelle Intervention noetig!")
 
         except Exception as e:
             logger.error(f"Fehler beim Self-Repair-Check fuer {symbol}: {e}")

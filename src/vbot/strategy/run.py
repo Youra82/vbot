@@ -124,20 +124,42 @@ def run_for_account(account: dict, telegram_config: dict,
         check_position_status(exchange, symbol, timeframe, telegram_config, logger)
 
     elif mode == 'signal':
-        if is_symbol_active(symbol):
-            logger.info(f"{symbol} hat aktive Position - pruefe/repariere Status.")
+        # --- Schritt 1: Exchange direkt pruefen (verhindert Spam auch bei fehlendem State) ---
+        try:
+            open_pos = exchange.fetch_open_positions(symbol)
+        except Exception as e:
+            logger.warning(f"Konnte offene Positionen nicht abrufen: {e}. Nehme leer an.")
+            open_pos = []
+
+        if open_pos or is_symbol_active(symbol):
+            logger.info(f"{symbol} hat aktive Position oder State-Eintrag - pruefe/repariere Status.")
             check_position_status(exchange, symbol, timeframe, telegram_config, logger)
             return
 
+        # --- Schritt 2: Offene Trigger-Orders pruefen (Safety-Net bei verlorenem State) ---
+        try:
+            trigger_orders = exchange.fetch_open_trigger_orders(symbol)
+            entry_orders   = [o for o in trigger_orders if not o.get('reduceOnly')]
+            if entry_orders:
+                logger.warning(
+                    f"{symbol}: {len(entry_orders)} offene Entry-Order(s) ohne State-Eintrag gefunden. "
+                    f"Storniere alles - kein neuer Trade."
+                )
+                exchange.cancel_all_orders_for_symbol(symbol)
+                return
+        except Exception as e:
+            logger.warning(f"Konnte Trigger-Orders nicht pruefen: {e}")
+
+        # --- Schritt 3: Slot-Pruefung ---
         if not has_open_slot(max_positions):
-            state     = read_global_state()
-            aktive    = list(state.get('positions', {}).keys())
+            state  = read_global_state()
+            aktive = list(state.get('positions', {}).keys())
             logger.info(
                 f"Max. {max_positions} Position(en) offen {aktive} - ueberspringe {symbol}."
             )
             return
 
-        # OHLCV-Daten laden
+        # --- Schritt 4: OHLCV und Fibo-Signal ---
         confirm_window = int(signal_config.get('confirm_overlap_window', 3))
         limit = max(50, confirm_window + 10)
         df = exchange.fetch_recent_ohlcv(symbol, timeframe, limit=limit)
@@ -145,7 +167,6 @@ def run_for_account(account: dict, telegram_config: dict,
             logger.warning(f"Keine OHLCV-Daten fuer {symbol}. Ueberspringe.")
             return
 
-        # Fibo-Signal berechnen
         signal = get_fibo_signal(df, signal_config)
 
         logger.info(f"Fibo-Signal {symbol}: side={signal['side']} | {signal['reason']}")
@@ -161,9 +182,13 @@ def run_for_account(account: dict, telegram_config: dict,
         if prev_high and prev_low and entry:
             logger.info(get_all_fibo_levels_info(prev_high, prev_low, entry))
 
-        # nochmal pruefen (Race Condition bei parallelen Prozessen)
-        if not has_open_slot(max_positions) or is_symbol_active(symbol):
-            logger.info(f"Slot nicht mehr frei - ueberspringe {symbol}.")
+        # Nochmal pruefen (Race Condition bei parallelen Prozessen)
+        try:
+            open_pos_check = exchange.fetch_open_positions(symbol)
+        except Exception:
+            open_pos_check = []
+        if open_pos_check or not has_open_slot(max_positions) or is_symbol_active(symbol):
+            logger.info(f"Slot nicht mehr frei oder Position aufgetaucht - ueberspringe {symbol}.")
             return
 
         success = execute_signal_trade(

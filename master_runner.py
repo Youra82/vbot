@@ -84,21 +84,40 @@ def main():
         logging.warning("Keine aktiven Strategien in settings.json.")
         return
 
-    processes = []
-    for strategy in active_strategies:
-        if not strategy.get('active', False):
-            continue
+    active = [s for s in active_strategies if s.get('active', False)]
+
+    # --- Phase 1: Check/Repair fuer alle Symbole (wie ltbbot) ---
+    logging.info("--- Phase 1: Check & Repair bestehender Positionen ---")
+    check_procs = []
+    for strategy in active:
         symbol    = strategy['symbol']
         timeframe = strategy['timeframe']
-        logging.info(f"  Starte: {symbol} ({timeframe})")
-
-        cmd = [python_exe, run_script, '--symbol', symbol, '--timeframe', timeframe, '--mode', 'signal']
+        logging.info(f"  Check: {symbol} ({timeframe})")
+        cmd  = [python_exe, run_script, '--symbol', symbol, '--timeframe', timeframe, '--mode', 'check']
         proc = subprocess.Popen(cmd, cwd=SCRIPT_DIR)
-        processes.append((symbol, timeframe, proc))
+        check_procs.append((symbol, timeframe, proc))
+        time.sleep(0.3)
+
+    for symbol, timeframe, proc in check_procs:
+        try:
+            proc.wait(timeout=120)
+        except subprocess.TimeoutExpired:
+            logging.error(f"  Check-Timeout: {symbol} ({timeframe}). Prozess beendet.")
+            proc.kill()
+
+    # --- Phase 2: Signal fuer alle Symbole pruefen ---
+    logging.info("--- Phase 2: Signal-Pruefung & neue Trades ---")
+    signal_procs = []
+    for strategy in active:
+        symbol    = strategy['symbol']
+        timeframe = strategy['timeframe']
+        logging.info(f"  Signal: {symbol} ({timeframe})")
+        cmd  = [python_exe, run_script, '--symbol', symbol, '--timeframe', timeframe, '--mode', 'signal']
+        proc = subprocess.Popen(cmd, cwd=SCRIPT_DIR)
+        signal_procs.append((symbol, timeframe, proc))
         time.sleep(0.5)
 
-    # Warte auf alle Prozesse
-    for symbol, timeframe, proc in processes:
+    for symbol, timeframe, proc in signal_procs:
         try:
             proc.wait(timeout=300)
             rc = proc.returncode
