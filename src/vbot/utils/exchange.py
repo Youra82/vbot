@@ -205,6 +205,16 @@ class Exchange:
             logger.error(f"Fehler bei Trigger Order: {e}", exc_info=True)
             raise
 
+    def fetch_open_trigger_orders(self, symbol: str) -> list:
+        """Gibt alle offenen Trigger-Orders (SL/TP) fuer ein Symbol zurueck."""
+        try:
+            params = {'productType': 'USDT-FUTURES', 'stop': True}
+            orders = self.exchange.fetch_open_orders(symbol, params=params)
+            return orders
+        except Exception as e:
+            logger.error(f"Fehler beim Abrufen der Trigger-Orders fuer {symbol}: {e}")
+            return []
+
     def cancel_all_orders_for_symbol(self, symbol: str):
         """Storniert alle offenen Orders (normal + trigger)."""
         for stop_flag in [False, True]:

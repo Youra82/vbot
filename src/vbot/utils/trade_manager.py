@@ -306,10 +306,77 @@ def check_position_status(exchange, symbol: str, timeframe: str,
         pos_side = pos.get('side', '?')
         unr_pnl  = pos.get('unrealizedPnl', 0.0)
         entry_p  = pos_state.get('entry_price', '?')
+        contracts = float(pos.get('contracts') or pos_state.get('contracts', 0))
         logger.info(
             f"Position fuer {symbol} noch offen: {pos_side.upper()} "
             f"| Entry: {entry_p} | Unrealized PnL: {unr_pnl:.2f} USDT"
         )
+
+        # Self-Repair: Pruefen ob SL und TP noch existieren
+        try:
+            trigger_orders = exchange.fetch_open_trigger_orders(symbol)
+            sl_exists = False
+            tp_exists = False
+            try:
+                entry_float = float(entry_p)
+            except (ValueError, TypeError):
+                entry_float = 0.0
+
+            for order in trigger_orders:
+                tp_raw = order.get('triggerPrice') or order.get('info', {}).get('triggerPrice', 0)
+                try:
+                    trig = float(tp_raw)
+                except (ValueError, TypeError):
+                    continue
+                if pos_side == 'long':
+                    if trig < entry_float:
+                        sl_exists = True
+                    elif trig > entry_float:
+                        tp_exists = True
+                else:
+                    if trig > entry_float:
+                        sl_exists = True
+                    elif trig < entry_float:
+                        tp_exists = True
+
+            if not sl_exists or not tp_exists:
+                logger.warning(
+                    f"Self-Repair {symbol}: SL={sl_exists} TP={tp_exists} — platziere fehlende Orders neu"
+                )
+                sl_order_side = 'sell' if pos_side == 'long' else 'buy'
+                hold_side     = pos_side
+                sl_price_val  = pos_state.get('sl_price')
+                tp_price_val  = pos_state.get('tp_price')
+
+                if not sl_exists and sl_price_val and contracts > 0:
+                    try:
+                        exchange.place_trigger_market_order(
+                            symbol, sl_order_side, contracts, float(sl_price_val),
+                            reduce=True, hold_side=hold_side
+                        )
+                        logger.info(f"SL repariert @ {sl_price_val}")
+                    except Exception as e:
+                        logger.error(f"SL-Reparatur fehlgeschlagen: {e}")
+
+                if not tp_exists and tp_price_val and contracts > 0:
+                    try:
+                        exchange.place_trigger_market_order(
+                            symbol, sl_order_side, contracts, float(tp_price_val),
+                            reduce=True, hold_side=hold_side
+                        )
+                        logger.info(f"TP repariert @ {tp_price_val}")
+                    except Exception as e:
+                        logger.error(f"TP-Reparatur fehlgeschlagen: {e}")
+
+                send_message(
+                    telegram_config.get('bot_token'), telegram_config.get('chat_id'),
+                    f"🔧 vbot Self-Repair: {symbol}\n"
+                    f"SL vorhanden: {'✅' if sl_exists else '❌ → neu platziert'}\n"
+                    f"TP vorhanden: {'✅' if tp_exists else '❌ → neu platziert'}"
+                )
+        except Exception as e:
+            logger.error(f"Fehler beim Self-Repair-Check fuer {symbol}: {e}")
+
         return
 
     # Keine offene Position — Timeout oder geschlossen?
