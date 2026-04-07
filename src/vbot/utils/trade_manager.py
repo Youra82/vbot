@@ -108,6 +108,8 @@ def claim_global_state(symbol: str, timeframe: str, side: str,
                         contracts: float, fibo_level: float,
                         prev_high: float, prev_low: float,
                         entry_order_id: str = '',
+                        sl_order_id: str = '',
+                        tp_order_id: str = '',
                         max_positions: int = 1) -> bool:
     state = read_global_state()
     positions = state.get('positions', {})
@@ -129,6 +131,8 @@ def claim_global_state(symbol: str, timeframe: str, side: str,
         'prev_candle_high': prev_high,
         'prev_candle_low':  prev_low,
         'entry_order_id':   entry_order_id,
+        'sl_order_id':      sl_order_id,
+        'tp_order_id':      tp_order_id,
     }
     write_global_state({'positions': positions})
     return True
@@ -206,22 +210,24 @@ def execute_signal_trade(exchange, symbol: str, timeframe: str,
         f"| Fibo: {signal.get('fibo_level', '?')}"
     )
 
-    # 1. SL platzieren
+    # 1. SL platzieren — ID fuer State merken
     try:
-        exchange.place_trigger_market_order(symbol, sl_order_side, contracts, sl_price,
-                                            reduce=True, hold_side=hold_side)
-        logger.info(f"SL platziert @ {sl_price:.6f}")
+        sl_resp     = exchange.place_trigger_market_order(symbol, sl_order_side, contracts, sl_price,
+                                                          reduce=True, hold_side=hold_side)
+        sl_order_id = sl_resp.get('id', '') if sl_resp else ''
+        logger.info(f"SL platziert @ {sl_price:.6f} (ID: {sl_order_id})")
     except Exception as e:
         logger.error(f"SL konnte nicht platziert werden: {e}")
         return False
 
     time.sleep(0.5)
 
-    # 2. TP platzieren
+    # 2. TP platzieren — ID fuer State merken
     try:
-        exchange.place_trigger_market_order(symbol, sl_order_side, contracts, tp_price,
-                                            reduce=True, hold_side=hold_side)
-        logger.info(f"TP platziert @ {tp_price:.6f}")
+        tp_resp     = exchange.place_trigger_market_order(symbol, sl_order_side, contracts, tp_price,
+                                                          reduce=True, hold_side=hold_side)
+        tp_order_id = tp_resp.get('id', '') if tp_resp else ''
+        logger.info(f"TP platziert @ {tp_price:.6f} (ID: {tp_order_id})")
     except Exception as e:
         logger.error(f"TP konnte nicht platziert werden: {e}. Raeume SL auf.")
         exchange.cancel_all_orders_for_symbol(symbol)
@@ -250,13 +256,15 @@ def execute_signal_trade(exchange, symbol: str, timeframe: str,
 
     entry_price = current_price
 
-    # Global State beanspruchen
+    # Global State beanspruchen — mit SL/TP Order-IDs
     claimed = claim_global_state(
         symbol, timeframe, side, entry_price, sl_price, tp_price, contracts,
         signal.get('fibo_level', 0.618),
         signal.get('prev_high', 0.0),
         signal.get('prev_low', 0.0),
         entry_order_id,
+        sl_order_id=sl_order_id,
+        tp_order_id=tp_order_id,
         max_positions=max_positions,
     )
     if not claimed:
@@ -367,89 +375,100 @@ def check_position_status(exchange, symbol: str, timeframe: str,
 
         # Self-Repair: Pruefen ob SL und TP noch existieren
         try:
-            trigger_orders = exchange.fetch_open_trigger_orders(symbol)
-            sl_exists = False
-            tp_exists = False
+            trigger_orders   = exchange.fetch_open_trigger_orders(symbol)
+            open_order_ids   = {str(o.get('id', '')) for o in trigger_orders}
+            sl_order_side    = 'sell' if pos_side == 'long' else 'buy'
+            hold_side_repair = pos_side
+            sl_price_val     = pos_state.get('sl_price')
+            tp_price_val     = pos_state.get('tp_price')
 
-            # Fuer LONG: SL/TP sind SELL-Orders. Fuer SHORT: BUY-Orders.
-            # Seiten-Vergleich statt reduceOnly-Flag (Bitget liefert reduceOnly oft falsch via ccxt)
-            expected_close_side = 'sell' if pos_side == 'long' else 'buy'
+            # --- Primaer: ID-basierte Erkennung (zuverlaessig unabhaengig von ccxt-Feld-Mapping) ---
+            saved_sl_id = str(pos_state.get('sl_order_id', ''))
+            saved_tp_id = str(pos_state.get('tp_order_id', ''))
 
-            if entry_float <= 0:
-                logger.warning(
-                    f"{symbol}: Entry-Preis unbekannt ({entry_float}) — "
-                    f"ueberspringe Self-Repair um falsches Platzieren zu verhindern."
+            if saved_sl_id and saved_tp_id:
+                sl_exists = saved_sl_id in open_order_ids
+                tp_exists = saved_tp_id in open_order_ids
+                logger.info(
+                    f"{symbol}: ID-Check — SL={sl_exists} (ID:{saved_sl_id}) "
+                    f"TP={tp_exists} (ID:{saved_tp_id}) | {len(open_order_ids)} offene Trigger-Orders"
                 )
             else:
-                for order in trigger_orders:
-                    # Nur Close-Orders (Gegenrichtung zur Position) beachten
-                    if order.get('side', '') != expected_close_side:
-                        continue
-                    # Trigger-Preis: stopPrice (ccxt unified) > triggerPrice > info.triggerPrice
-                    trig_raw = (order.get('stopPrice')
-                                or order.get('triggerPrice')
-                                or order.get('info', {}).get('triggerPrice'))
-                    try:
-                        trig = float(trig_raw)
-                    except (ValueError, TypeError):
-                        continue
-                    if trig <= 0:
-                        continue
-                    if pos_side == 'long':
-                        if trig < entry_float:
-                            sl_exists = True
-                        elif trig > entry_float:
-                            tp_exists = True
-                    else:
-                        if trig > entry_float:
-                            sl_exists = True
-                        elif trig < entry_float:
-                            tp_exists = True
-
-                logger.info(
-                    f"{symbol}: SL={sl_exists} TP={tp_exists} "
-                    f"| {len(trigger_orders)} Trigger-Orders geprueft "
-                    f"| Entry={entry_float:.6f} | Seite={pos_side.upper()}"
-                )
-
-                if not sl_exists or not tp_exists:
+                # --- Fallback: Preis-basierte Erkennung (fuer alte Trades ohne gespeicherte IDs) ---
+                sl_exists = False
+                tp_exists = False
+                if entry_float <= 0:
                     logger.warning(
-                        f"Self-Repair {symbol}: SL={sl_exists} TP={tp_exists} — platziere fehlende Orders neu"
+                        f"{symbol}: Keine Order-IDs im State und Entry-Preis unbekannt — "
+                        f"ueberspringe Self-Repair um falsches Platzieren zu verhindern."
                     )
-                    sl_order_side = 'sell' if pos_side == 'long' else 'buy'
-                    hold_side     = pos_side
-                    sl_price_val  = pos_state.get('sl_price')
-                    tp_price_val  = pos_state.get('tp_price')
-
-                    if not sl_exists and sl_price_val and contracts > 0:
+                else:
+                    for order in trigger_orders:
+                        trig_raw = (order.get('stopPrice')
+                                    or order.get('triggerPrice')
+                                    or order.get('info', {}).get('triggerPrice')
+                                    or order.get('info', {}).get('planPrice'))
                         try:
-                            exchange.place_trigger_market_order(
-                                symbol, sl_order_side, contracts, float(sl_price_val),
-                                reduce=True, hold_side=hold_side
-                            )
-                            logger.info(f"SL repariert @ {sl_price_val}")
-                        except Exception as e:
-                            logger.error(f"SL-Reparatur fehlgeschlagen: {e}")
-                    elif not sl_exists and not sl_price_val:
-                        logger.error(
-                            f"SL fehlt fuer {symbol} aber SL-Preis unbekannt "
-                            f"(State rekonstruiert). Manuelle Intervention noetig!"
-                        )
+                            trig = float(trig_raw)
+                        except (ValueError, TypeError):
+                            continue
+                        if trig <= 0:
+                            continue
+                        if pos_side == 'long':
+                            if trig < entry_float:
+                                sl_exists = True
+                            elif trig > entry_float:
+                                tp_exists = True
+                        else:
+                            if trig > entry_float:
+                                sl_exists = True
+                            elif trig < entry_float:
+                                tp_exists = True
+                    logger.info(
+                        f"{symbol}: Preis-Fallback-Check — SL={sl_exists} TP={tp_exists} "
+                        f"| {len(trigger_orders)} Trigger-Orders | Entry={entry_float:.6f}"
+                    )
 
-                    if not tp_exists and tp_price_val and contracts > 0:
-                        try:
-                            exchange.place_trigger_market_order(
-                                symbol, sl_order_side, contracts, float(tp_price_val),
-                                reduce=True, hold_side=hold_side
-                            )
-                            logger.info(f"TP repariert @ {tp_price_val}")
-                        except Exception as e:
-                            logger.error(f"TP-Reparatur fehlgeschlagen: {e}")
-                    elif not tp_exists and not tp_price_val:
-                        logger.error(
-                            f"TP fehlt fuer {symbol} aber TP-Preis unbekannt "
-                            f"(State rekonstruiert). Manuelle Intervention noetig!"
+            # --- Repair: fehlende Orders neu platzieren und IDs im State aktualisieren ---
+            if not sl_exists or not tp_exists:
+                logger.warning(
+                    f"Self-Repair {symbol}: SL={sl_exists} TP={tp_exists} — platziere fehlende Orders neu"
+                )
+                state_update = read_global_state()
+                pos_entry    = state_update.get('positions', {}).get(symbol, {})
+
+                if not sl_exists and sl_price_val and contracts > 0:
+                    try:
+                        sl_resp    = exchange.place_trigger_market_order(
+                            symbol, sl_order_side, contracts, float(sl_price_val),
+                            reduce=True, hold_side=hold_side_repair
                         )
+                        new_sl_id  = str(sl_resp.get('id', '')) if sl_resp else ''
+                        pos_entry['sl_order_id'] = new_sl_id
+                        logger.info(f"SL repariert @ {sl_price_val} (neue ID: {new_sl_id})")
+                    except Exception as e:
+                        logger.error(f"SL-Reparatur fehlgeschlagen: {e}")
+                elif not sl_exists and not sl_price_val:
+                    logger.error(f"SL fehlt fuer {symbol} aber SL-Preis unbekannt. Manuelle Intervention noetig!")
+
+                if not tp_exists and tp_price_val and contracts > 0:
+                    try:
+                        tp_resp    = exchange.place_trigger_market_order(
+                            symbol, sl_order_side, contracts, float(tp_price_val),
+                            reduce=True, hold_side=hold_side_repair
+                        )
+                        new_tp_id  = str(tp_resp.get('id', '')) if tp_resp else ''
+                        pos_entry['tp_order_id'] = new_tp_id
+                        logger.info(f"TP repariert @ {tp_price_val} (neue ID: {new_tp_id})")
+                    except Exception as e:
+                        logger.error(f"TP-Reparatur fehlgeschlagen: {e}")
+                elif not tp_exists and not tp_price_val:
+                    logger.error(f"TP fehlt fuer {symbol} aber TP-Preis unbekannt. Manuelle Intervention noetig!")
+
+                # Neue IDs in State zurueckschreiben
+                if symbol in state_update.get('positions', {}):
+                    state_update['positions'][symbol] = pos_entry
+                    write_global_state(state_update)
 
         except Exception as e:
             logger.error(f"Fehler beim Self-Repair-Check fuer {symbol}: {e}")
