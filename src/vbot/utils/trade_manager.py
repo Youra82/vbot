@@ -305,11 +305,19 @@ def check_position_status(exchange, symbol: str, timeframe: str,
         pos      = open_pos[0]
         pos_side = pos.get('side', '?')
         unr_pnl  = pos.get('unrealizedPnl', 0.0)
-        entry_p  = pos_state.get('entry_price', '?')
+        entry_p   = pos_state.get('entry_price', '?')
         contracts = float(pos.get('contracts') or pos_state.get('contracts', 0))
+        # Echter Entry-Preis von der Position bevorzugen (robuster bei Slippage)
+        real_entry = (pos.get('entryPrice')
+                      or pos.get('info', {}).get('openPriceAvg')
+                      or pos.get('info', {}).get('avgOpenPrice'))
+        try:
+            entry_float = float(real_entry) if real_entry else float(entry_p)
+        except (ValueError, TypeError):
+            entry_float = 0.0
         logger.info(
             f"Position fuer {symbol} noch offen: {pos_side.upper()} "
-            f"| Entry: {entry_p} | Unrealized PnL: {unr_pnl:.2f} USDT"
+            f"| Entry: {entry_float or entry_p} | Unrealized PnL: {unr_pnl:.2f} USDT"
         )
 
         # Self-Repair: Pruefen ob SL und TP noch existieren
@@ -317,12 +325,11 @@ def check_position_status(exchange, symbol: str, timeframe: str,
             trigger_orders = exchange.fetch_open_trigger_orders(symbol)
             sl_exists = False
             tp_exists = False
-            try:
-                entry_float = float(entry_p)
-            except (ValueError, TypeError):
-                entry_float = 0.0
 
             for order in trigger_orders:
+                # Nur reduceOnly Trigger-Market-Orders beachten
+                if not order.get('reduceOnly'):
+                    continue
                 tp_raw = order.get('triggerPrice') or order.get('info', {}).get('triggerPrice', 0)
                 try:
                     trig = float(tp_raw)
