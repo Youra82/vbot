@@ -1,0 +1,32 @@
+{
+  "market": {
+    "symbol": "BNB/USDT:USDT",
+    "timeframe": "2h"
+  },
+  "signal": {
+    "fibo_tp_level": 0.786,
+    "min_candle_body_pct": 0.5,
+    "min_candle_range_pct": 0.9,
+    "sl_buffer_pct": 0.15,
+    "confirm_overlap_window": 3
+  },
+  "risk": {
+    "leverage": 2,
+    "risk_per_trade_pct": 0.5,
+    "margin_mode": "isolated"
+  },
+  "_backtest": {
+    "pnl_pct": 32.89,
+    "win_rate": 42.9,
+    "total_trades": 1045,
+    "max_drawdown": 12.54,
+    "avg_rr": 1.04,
+    "start_date": "2023-04-07",
+    "end_date": "2026-04-06",
+    "capital": 15.0,
+    "oos_pnl_pct": 24.79,
+    "oos_win_rate": 46.0,
+    "oos_trades": 322,
+    "oos_max_dd": 7.64
+  }
+}

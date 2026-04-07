@@ -1,0 +1,32 @@
+{
+  "market": {
+    "symbol": "AVAX/USDT:USDT",
+    "timeframe": "4h"
+  },
+  "signal": {
+    "fibo_tp_level": 0.382,
+    "min_candle_body_pct": 0.4,
+    "min_candle_range_pct": 1.0,
+    "sl_buffer_pct": 0.4,
+    "confirm_overlap_window": 5
+  },
+  "risk": {
+    "leverage": 2,
+    "risk_per_trade_pct": 0.5,
+    "margin_mode": "isolated"
+  },
+  "_backtest": {
+    "pnl_pct": 32.49,
+    "win_rate": 40.7,
+    "total_trades": 700,
+    "max_drawdown": 12.58,
+    "avg_rr": 1.01,
+    "start_date": "2023-04-07",
+    "end_date": "2026-04-06",
+    "capital": 15.0,
+    "oos_pnl_pct": 18.0,
+    "oos_win_rate": 46.6,
+    "oos_trades": 232,
+    "oos_max_dd": 6.89
+  }
+}
