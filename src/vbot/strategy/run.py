@@ -132,8 +132,9 @@ def run_for_account(account: dict, telegram_config: dict,
             open_pos = []
 
         if open_pos or is_symbol_active(symbol):
-            logger.info(f"{symbol} hat aktive Position oder State-Eintrag - pruefe/repariere Status.")
-            check_position_status(exchange, symbol, timeframe, telegram_config, logger)
+            # Phase 1 (check-Modus) hat bereits geprueft und repariert.
+            # Hier nur skippen — kein zweiter Repair-Aufruf (verhindert Order-Spam).
+            logger.info(f"{symbol} hat aktive Position oder State-Eintrag — ueberspringe Signal-Check.")
             return
 
         # --- Schritt 2: Offene Trigger-Orders pruefen (Safety-Net bei verlorenem State) ---

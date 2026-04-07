@@ -371,58 +371,85 @@ def check_position_status(exchange, symbol: str, timeframe: str,
             sl_exists = False
             tp_exists = False
 
-            for order in trigger_orders:
-                # Nur reduceOnly Trigger-Market-Orders beachten
-                if not order.get('reduceOnly'):
-                    continue
-                tp_raw = order.get('triggerPrice') or order.get('info', {}).get('triggerPrice', 0)
-                try:
-                    trig = float(tp_raw)
-                except (ValueError, TypeError):
-                    continue
-                if pos_side == 'long':
-                    if trig < entry_float:
-                        sl_exists = True
-                    elif trig > entry_float:
-                        tp_exists = True
-                else:
-                    if trig > entry_float:
-                        sl_exists = True
-                    elif trig < entry_float:
-                        tp_exists = True
+            # Fuer LONG: SL/TP sind SELL-Orders. Fuer SHORT: BUY-Orders.
+            # Seiten-Vergleich statt reduceOnly-Flag (Bitget liefert reduceOnly oft falsch via ccxt)
+            expected_close_side = 'sell' if pos_side == 'long' else 'buy'
 
-            if not sl_exists or not tp_exists:
+            if entry_float <= 0:
                 logger.warning(
-                    f"Self-Repair {symbol}: SL={sl_exists} TP={tp_exists} — platziere fehlende Orders neu"
+                    f"{symbol}: Entry-Preis unbekannt ({entry_float}) — "
+                    f"ueberspringe Self-Repair um falsches Platzieren zu verhindern."
                 )
-                sl_order_side = 'sell' if pos_side == 'long' else 'buy'
-                hold_side     = pos_side
-                sl_price_val  = pos_state.get('sl_price')
-                tp_price_val  = pos_state.get('tp_price')
-
-                if not sl_exists and sl_price_val and contracts > 0:
+            else:
+                for order in trigger_orders:
+                    # Nur Close-Orders (Gegenrichtung zur Position) beachten
+                    if order.get('side', '') != expected_close_side:
+                        continue
+                    # Trigger-Preis: stopPrice (ccxt unified) > triggerPrice > info.triggerPrice
+                    trig_raw = (order.get('stopPrice')
+                                or order.get('triggerPrice')
+                                or order.get('info', {}).get('triggerPrice'))
                     try:
-                        exchange.place_trigger_market_order(
-                            symbol, sl_order_side, contracts, float(sl_price_val),
-                            reduce=True, hold_side=hold_side
-                        )
-                        logger.info(f"SL repariert @ {sl_price_val}")
-                    except Exception as e:
-                        logger.error(f"SL-Reparatur fehlgeschlagen: {e}")
-                elif not sl_exists and not sl_price_val:
-                    logger.error(f"SL fehlt fuer {symbol} aber SL-Preis unbekannt (State rekonstruiert). Manuelle Intervention noetig!")
+                        trig = float(trig_raw)
+                    except (ValueError, TypeError):
+                        continue
+                    if trig <= 0:
+                        continue
+                    if pos_side == 'long':
+                        if trig < entry_float:
+                            sl_exists = True
+                        elif trig > entry_float:
+                            tp_exists = True
+                    else:
+                        if trig > entry_float:
+                            sl_exists = True
+                        elif trig < entry_float:
+                            tp_exists = True
 
-                if not tp_exists and tp_price_val and contracts > 0:
-                    try:
-                        exchange.place_trigger_market_order(
-                            symbol, sl_order_side, contracts, float(tp_price_val),
-                            reduce=True, hold_side=hold_side
+                logger.info(
+                    f"{symbol}: SL={sl_exists} TP={tp_exists} "
+                    f"| {len(trigger_orders)} Trigger-Orders geprueft "
+                    f"| Entry={entry_float:.6f} | Seite={pos_side.upper()}"
+                )
+
+                if not sl_exists or not tp_exists:
+                    logger.warning(
+                        f"Self-Repair {symbol}: SL={sl_exists} TP={tp_exists} — platziere fehlende Orders neu"
+                    )
+                    sl_order_side = 'sell' if pos_side == 'long' else 'buy'
+                    hold_side     = pos_side
+                    sl_price_val  = pos_state.get('sl_price')
+                    tp_price_val  = pos_state.get('tp_price')
+
+                    if not sl_exists and sl_price_val and contracts > 0:
+                        try:
+                            exchange.place_trigger_market_order(
+                                symbol, sl_order_side, contracts, float(sl_price_val),
+                                reduce=True, hold_side=hold_side
+                            )
+                            logger.info(f"SL repariert @ {sl_price_val}")
+                        except Exception as e:
+                            logger.error(f"SL-Reparatur fehlgeschlagen: {e}")
+                    elif not sl_exists and not sl_price_val:
+                        logger.error(
+                            f"SL fehlt fuer {symbol} aber SL-Preis unbekannt "
+                            f"(State rekonstruiert). Manuelle Intervention noetig!"
                         )
-                        logger.info(f"TP repariert @ {tp_price_val}")
-                    except Exception as e:
-                        logger.error(f"TP-Reparatur fehlgeschlagen: {e}")
-                elif not tp_exists and not tp_price_val:
-                    logger.error(f"TP fehlt fuer {symbol} aber TP-Preis unbekannt (State rekonstruiert). Manuelle Intervention noetig!")
+
+                    if not tp_exists and tp_price_val and contracts > 0:
+                        try:
+                            exchange.place_trigger_market_order(
+                                symbol, sl_order_side, contracts, float(tp_price_val),
+                                reduce=True, hold_side=hold_side
+                            )
+                            logger.info(f"TP repariert @ {tp_price_val}")
+                        except Exception as e:
+                            logger.error(f"TP-Reparatur fehlgeschlagen: {e}")
+                    elif not tp_exists and not tp_price_val:
+                        logger.error(
+                            f"TP fehlt fuer {symbol} aber TP-Preis unbekannt "
+                            f"(State rekonstruiert). Manuelle Intervention noetig!"
+                        )
 
         except Exception as e:
             logger.error(f"Fehler beim Self-Repair-Check fuer {symbol}: {e}")
@@ -452,14 +479,24 @@ def check_position_status(exchange, symbol: str, timeframe: str,
                     except (ValueError, TypeError):
                         entry_float = 0.0
 
+                    # Seiten-basierte Erkennung (wie im offenen Positions-Check)
+                    expected_close_side = 'sell' if saved_side == 'long' else 'buy'
+
                     for order in trigger_orders:
-                        if not order.get('reduceOnly'):
+                        order_side = order.get('side', '')
+                        if order_side != expected_close_side:
+                            # Das ist eine Entry-Order (gleiche Richtung wie Position)
                             entry_exists = True
                             continue
-                        tp_raw = order.get('triggerPrice') or order.get('info', {}).get('triggerPrice', 0)
+                        # Close-Order: Trigger-Preis bestimmen
+                        trig_raw = (order.get('stopPrice')
+                                    or order.get('triggerPrice')
+                                    or order.get('info', {}).get('triggerPrice'))
                         try:
-                            trig = float(tp_raw)
+                            trig = float(trig_raw)
                         except (ValueError, TypeError):
+                            continue
+                        if trig <= 0 or entry_float <= 0:
                             continue
                         if saved_side == 'long':
                             if trig < entry_float:
