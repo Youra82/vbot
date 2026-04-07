@@ -368,12 +368,6 @@ def check_position_status(exchange, symbol: str, timeframe: str,
                     except Exception as e:
                         logger.error(f"TP-Reparatur fehlgeschlagen: {e}")
 
-                send_message(
-                    telegram_config.get('bot_token'), telegram_config.get('chat_id'),
-                    f"🔧 vbot Self-Repair: {symbol}\n"
-                    f"SL vorhanden: {'✅' if sl_exists else '❌ → neu platziert'}\n"
-                    f"TP vorhanden: {'✅' if tp_exists else '❌ → neu platziert'}"
-                )
         except Exception as e:
             logger.error(f"Fehler beim Self-Repair-Check fuer {symbol}: {e}")
 
