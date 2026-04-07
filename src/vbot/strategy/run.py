@@ -125,7 +125,8 @@ def run_for_account(account: dict, telegram_config: dict,
 
     elif mode == 'signal':
         if is_symbol_active(symbol):
-            logger.info(f"{symbol} hat bereits eine offene Position - ueberspringe.")
+            logger.info(f"{symbol} hat aktive Position - pruefe/repariere Status.")
+            check_position_status(exchange, symbol, timeframe, telegram_config, logger)
             return
 
         if not has_open_slot(max_positions):
