@@ -391,8 +391,72 @@ def check_position_status(exchange, symbol: str, timeframe: str,
             tf_seconds  = _timeframe_to_seconds(timeframe)
 
             if age_seconds < tf_seconds:
+                # Entry noch pending — Self-Repair fuer fehlende SL/TP
+                try:
+                    trigger_orders = exchange.fetch_open_trigger_orders(symbol)
+                    entry_exists   = False
+                    sl_exists      = False
+                    tp_exists      = False
+                    saved_side     = pos_state.get('side', 'long')
+                    try:
+                        entry_float = float(pos_state.get('entry_price', 0))
+                    except (ValueError, TypeError):
+                        entry_float = 0.0
+
+                    for order in trigger_orders:
+                        if not order.get('reduceOnly'):
+                            entry_exists = True
+                            continue
+                        tp_raw = order.get('triggerPrice') or order.get('info', {}).get('triggerPrice', 0)
+                        try:
+                            trig = float(tp_raw)
+                        except (ValueError, TypeError):
+                            continue
+                        if saved_side == 'long':
+                            if trig < entry_float:
+                                sl_exists = True
+                            elif trig > entry_float:
+                                tp_exists = True
+                        else:
+                            if trig > entry_float:
+                                sl_exists = True
+                            elif trig < entry_float:
+                                tp_exists = True
+
+                    if entry_exists and (not sl_exists or not tp_exists):
+                        logger.warning(
+                            f"Self-Repair (pending) {symbol}: SL={sl_exists} TP={tp_exists} — repariere"
+                        )
+                        sl_order_side = 'sell' if saved_side == 'long' else 'buy'
+                        hold_side     = saved_side
+                        contracts_val = float(pos_state.get('contracts', 0))
+
+                        if not sl_exists and pos_state.get('sl_price') and contracts_val > 0:
+                            try:
+                                exchange.place_trigger_market_order(
+                                    symbol, sl_order_side, contracts_val,
+                                    float(pos_state['sl_price']),
+                                    reduce=True, hold_side=hold_side
+                                )
+                                logger.info(f"SL (pending) repariert @ {pos_state['sl_price']}")
+                            except Exception as e:
+                                logger.error(f"SL-Reparatur (pending) fehlgeschlagen: {e}")
+
+                        if not tp_exists and pos_state.get('tp_price') and contracts_val > 0:
+                            try:
+                                exchange.place_trigger_market_order(
+                                    symbol, sl_order_side, contracts_val,
+                                    float(pos_state['tp_price']),
+                                    reduce=True, hold_side=hold_side
+                                )
+                                logger.info(f"TP (pending) repariert @ {pos_state['tp_price']}")
+                            except Exception as e:
+                                logger.error(f"TP-Reparatur (pending) fehlgeschlagen: {e}")
+                except Exception as e:
+                    logger.error(f"Fehler beim Pending-Repair-Check fuer {symbol}: {e}")
+
                 logger.info(
-                    f"Kein Position, aber Entry-Trigger noch aktiv "
+                    f"Entry-Trigger noch aktiv "
                     f"({age_seconds/60:.0f}/{tf_seconds/60:.0f} min). Warte."
                 )
                 return
