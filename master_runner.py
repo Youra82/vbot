@@ -86,48 +86,28 @@ def main():
 
     active = [s for s in active_strategies if s.get('active', False)]
 
-    # --- Phase 1: Check/Repair fuer alle Symbole (wie ltbbot) ---
-    logging.info("--- Phase 1: Check & Repair bestehender Positionen ---")
-    check_procs = []
-    for strategy in active:
-        symbol    = strategy['symbol']
-        timeframe = strategy['timeframe']
-        logging.info(f"  Check: {symbol} ({timeframe})")
-        cmd  = [python_exe, run_script, '--symbol', symbol, '--timeframe', timeframe, '--mode', 'check']
-        proc = subprocess.Popen(cmd, cwd=SCRIPT_DIR)
-        check_procs.append((symbol, timeframe, proc))
-        time.sleep(0.3)
+    def run_sequential(mode: str, timeout: int):
+        """Startet run.py sequentiell fuer jedes Symbol — verhindert API Rate-Limiting (429)."""
+        label = 'Check' if mode == 'check' else 'Signal'
+        logging.info(f"--- Phase {1 if mode == 'check' else 2}: {label} ---")
+        for strategy in active:
+            symbol    = strategy['symbol']
+            timeframe = strategy['timeframe']
+            logging.info(f"  {label}: {symbol} ({timeframe})")
+            cmd  = [python_exe, run_script, '--symbol', symbol, '--timeframe', timeframe, '--mode', mode]
+            proc = subprocess.Popen(cmd, cwd=SCRIPT_DIR)
+            try:
+                proc.wait(timeout=timeout)
+                rc = proc.returncode
+                if rc != 0:
+                    logging.warning(f"  {symbol} ({timeframe}) Code {rc}")
+            except subprocess.TimeoutExpired:
+                logging.error(f"  {symbol} ({timeframe}) Timeout — beendet.")
+                proc.kill()
+            time.sleep(1.0)  # Pause zwischen Symbolen verhindert 429
 
-    for symbol, timeframe, proc in check_procs:
-        try:
-            proc.wait(timeout=120)
-        except subprocess.TimeoutExpired:
-            logging.error(f"  Check-Timeout: {symbol} ({timeframe}). Prozess beendet.")
-            proc.kill()
-
-    # --- Phase 2: Signal fuer alle Symbole pruefen ---
-    logging.info("--- Phase 2: Signal-Pruefung & neue Trades ---")
-    signal_procs = []
-    for strategy in active:
-        symbol    = strategy['symbol']
-        timeframe = strategy['timeframe']
-        logging.info(f"  Signal: {symbol} ({timeframe})")
-        cmd  = [python_exe, run_script, '--symbol', symbol, '--timeframe', timeframe, '--mode', 'signal']
-        proc = subprocess.Popen(cmd, cwd=SCRIPT_DIR)
-        signal_procs.append((symbol, timeframe, proc))
-        time.sleep(0.5)
-
-    for symbol, timeframe, proc in signal_procs:
-        try:
-            proc.wait(timeout=300)
-            rc = proc.returncode
-            if rc != 0:
-                logging.warning(f"  {symbol} ({timeframe}) beendet mit Code {rc}")
-            else:
-                logging.info(f"  {symbol} ({timeframe}) erfolgreich abgeschlossen.")
-        except subprocess.TimeoutExpired:
-            logging.error(f"  {symbol} ({timeframe}) Timeout! Prozess wird beendet.")
-            proc.kill()
+    run_sequential('check',  timeout=120)
+    run_sequential('signal', timeout=300)
 
     logging.info("Master Runner abgeschlossen.")
 

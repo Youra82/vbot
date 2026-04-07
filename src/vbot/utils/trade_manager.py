@@ -487,78 +487,51 @@ def check_position_status(exchange, symbol: str, timeframe: str,
 
             if age_seconds < tf_seconds:
                 # Entry noch pending — Self-Repair fuer fehlende SL/TP
+                fetch_error    = False
+                trigger_orders = []
                 try:
                     trigger_orders = exchange.fetch_open_trigger_orders(symbol)
-                    entry_exists   = False
-                    sl_exists      = False
-                    tp_exists      = False
-                    saved_side     = pos_state.get('side', 'long')
-                    try:
-                        entry_float = float(pos_state.get('entry_price', 0))
-                    except (ValueError, TypeError):
-                        entry_float = 0.0
-
-                    # Seiten-basierte Erkennung (wie im offenen Positions-Check)
-                    expected_close_side = 'sell' if saved_side == 'long' else 'buy'
-
-                    for order in trigger_orders:
-                        order_side = order.get('side', '')
-                        if order_side != expected_close_side:
-                            # Das ist eine Entry-Order (gleiche Richtung wie Position)
-                            entry_exists = True
-                            continue
-                        # Close-Order: Trigger-Preis bestimmen
-                        trig_raw = (order.get('stopPrice')
-                                    or order.get('triggerPrice')
-                                    or order.get('info', {}).get('triggerPrice'))
-                        try:
-                            trig = float(trig_raw)
-                        except (ValueError, TypeError):
-                            continue
-                        if trig <= 0 or entry_float <= 0:
-                            continue
-                        if saved_side == 'long':
-                            if trig < entry_float:
-                                sl_exists = True
-                            elif trig > entry_float:
-                                tp_exists = True
-                        else:
-                            if trig > entry_float:
-                                sl_exists = True
-                            elif trig < entry_float:
-                                tp_exists = True
-
-                    if entry_exists and (not sl_exists or not tp_exists):
-                        logger.warning(
-                            f"Self-Repair (pending) {symbol}: SL={sl_exists} TP={tp_exists} — repariere"
-                        )
-                        sl_order_side = 'sell' if saved_side == 'long' else 'buy'
-                        hold_side     = saved_side
-                        contracts_val = float(pos_state.get('contracts', 0))
-
-                        if not sl_exists and pos_state.get('sl_price') and contracts_val > 0:
-                            try:
-                                exchange.place_trigger_market_order(
-                                    symbol, sl_order_side, contracts_val,
-                                    float(pos_state['sl_price']),
-                                    reduce=True, hold_side=hold_side
-                                )
-                                logger.info(f"SL (pending) repariert @ {pos_state['sl_price']}")
-                            except Exception as e:
-                                logger.error(f"SL-Reparatur (pending) fehlgeschlagen: {e}")
-
-                        if not tp_exists and pos_state.get('tp_price') and contracts_val > 0:
-                            try:
-                                exchange.place_trigger_market_order(
-                                    symbol, sl_order_side, contracts_val,
-                                    float(pos_state['tp_price']),
-                                    reduce=True, hold_side=hold_side
-                                )
-                                logger.info(f"TP (pending) repariert @ {pos_state['tp_price']}")
-                            except Exception as e:
-                                logger.error(f"TP-Reparatur (pending) fehlgeschlagen: {e}")
                 except Exception as e:
-                    logger.error(f"Fehler beim Pending-Repair-Check fuer {symbol}: {e}")
+                    logger.error(f"Fehler beim Pending-Trigger-Fetch fuer {symbol}: {e}")
+                    fetch_error = True
+
+                entry_exists  = False
+                saved_side    = pos_state.get('side', 'long')
+                saved_entry_id = str(pos_state.get('entry_order_id', ''))
+                open_ids       = {str(o.get('id', '')) for o in trigger_orders}
+
+                if not fetch_error:
+                    if saved_entry_id:
+                        # ID-basierte Erkennung: Entry-Order noch offen?
+                        entry_exists = saved_entry_id in open_ids
+                    else:
+                        # Fallback: irgendeine nicht-Close-Order vorhanden?
+                        expected_close_side = 'sell' if saved_side == 'long' else 'buy'
+                        for order in trigger_orders:
+                            if order.get('side', '') != expected_close_side:
+                                entry_exists = True
+                                break
+
+                    if not entry_exists:
+                        # Keine Entry-Order auf Exchange — Position wurde geschlossen
+                        # oder Entry wurde abgebrochen. State leeren.
+                        logger.info(
+                            f"{symbol}: Entry-Trigger nicht mehr auf Exchange gefunden "
+                            f"(ID: {saved_entry_id or 'unbekannt'}). "
+                            f"Storniere Rest-Orders und leere State."
+                        )
+                        try:
+                            exchange.cancel_all_orders_for_symbol(symbol)
+                        except Exception as ce:
+                            logger.warning(f"Cleanup-Fehler: {ce}")
+                        send_message(
+                            telegram_config.get('bot_token'), telegram_config.get('chat_id'),
+                            f"⏰ vbot: Entry fuer {symbol} ({timeframe}) nicht mehr aktiv.\n"
+                            f"Order wurde ausgefuehrt oder abgebrochen — State geleert.\n"
+                            f"Warte auf naechstes Signal..."
+                        )
+                        clear_global_state(symbol)
+                        return
 
                 logger.info(
                     f"Entry-Trigger noch aktiv "
