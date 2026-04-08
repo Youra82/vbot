@@ -473,6 +473,43 @@ def check_position_status(exchange, symbol: str, timeframe: str,
         except Exception as e:
             logger.error(f"Fehler beim Self-Repair-Check fuer {symbol}: {e}")
 
+        # --- Preis-Overshoot-Check: Position schließen falls Preis SL oder TP überschritten ---
+        if sl_price_val and tp_price_val and contracts > 0:
+            try:
+                current_price = float(exchange.exchange.fetch_ticker(symbol)['last'])
+                sl_val = float(sl_price_val)
+                tp_val = float(tp_price_val)
+                if pos_side == 'long':
+                    breached = current_price <= sl_val or current_price >= tp_val
+                    reason   = "SL" if current_price <= sl_val else "TP"
+                else:
+                    breached = current_price >= sl_val or current_price <= tp_val
+                    reason   = "SL" if current_price >= sl_val else "TP"
+                if breached:
+                    level = sl_val if reason == 'SL' else tp_val
+                    logger.warning(
+                        f"Preis-Overshoot: {current_price:.6f} hat {reason} ({level:.6f}) überschritten — "
+                        f"schließe Position {symbol} per Market."
+                    )
+                    try:
+                        exchange.cancel_all_orders_for_symbol(symbol)
+                    except Exception as ce:
+                        logger.warning(f"Cancel-Orders fehlgeschlagen (ignoriert): {ce}")
+                    exchange.place_market_order(symbol, sl_order_side, contracts, reduce=True)
+                    # State leeren
+                    state_update = read_global_state()
+                    if 'positions' in state_update and symbol in state_update['positions']:
+                        del state_update['positions'][symbol]
+                        write_global_state(state_update)
+                    send_message(
+                        telegram_config.get('bot_token'), telegram_config.get('chat_id'),
+                        f"vBot NOTSCHLIESSUNG ({symbol}): Preis {current_price:.6f} hat "
+                        f"{reason} ({level:.6f}) überschritten. Position geschlossen."
+                    )
+                    logger.info(f"Position {symbol} geschlossen — State geleert.")
+            except Exception as e:
+                logger.error(f"Fehler beim Preis-Overshoot-Check fuer {symbol}: {e}")
+
         return
 
     # Keine offene Position — Timeout oder geschlossen?
