@@ -114,7 +114,7 @@
     "fibo_tp_level": 0.618,
     "_fibo_tp_level_info": "Fibo-Level fuer TP: 0.236, 0.382, 0.5, 0.618, 0.786",
     "min_candle_body_pct": 0.3,
-    "_min_candle_body_pct_info": "Mindest-Verhaeltnis Kerzenk\u00f6rper zu Gesamtrange (filtert Dojis)",
+    "_min_candle_body_pct_info": "Mindest-Verhaeltnis Kerzenkoerper zu Gesamtrange (filtert Dojis)",
     "min_candle_range_pct": 0.2,
     "_min_candle_range_pct_info": "Minimale Kerzrange als % des Preises",
     "sl_buffer_pct": 0.15,

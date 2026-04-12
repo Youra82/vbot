@@ -85,6 +85,21 @@ def clear_global_state(symbol: str = None):
         logger.info(f"Global State fuer {symbol} geleert.")
 
 
+def get_last_signal_ts(symbol: str) -> str:
+    """Gibt den Timestamp der letzten Signalkerze zurueck, fuer die ein Trade platziert wurde."""
+    state = read_global_state()
+    return state.get('last_signal_ts', {}).get(symbol, '')
+
+
+def set_last_signal_ts(symbol: str, ts: str):
+    """Speichert den Timestamp der Signalkerze nach erfolgreichem Trade-Eintritt."""
+    state = read_global_state()
+    if 'last_signal_ts' not in state:
+        state['last_signal_ts'] = {}
+    state['last_signal_ts'][symbol] = str(ts)
+    write_global_state(state)
+
+
 def has_open_slot(max_positions: int) -> bool:
     """True wenn noch ein Slot frei ist."""
     state = read_global_state()
@@ -145,12 +160,13 @@ def claim_global_state(symbol: str, timeframe: str, side: str,
 def calculate_contracts(balance_usdt: float, entry_price: float,
                           sl_price: float, min_amount: float,
                           risk_per_trade_pct: float = 1.0) -> float:
+    """Risiko-basierte Kontraktanzahl. Kein automatisches Aufblaehen auf min_amount —
+    das wird im Aufrufer mit explizitem Margin-Check gehandhabt (titanbot-Stil)."""
     risk_amount = balance_usdt * risk_per_trade_pct / 100.0
     sl_distance = abs(entry_price - sl_price)
     if sl_distance <= 0:
-        return min_amount
-    contracts = risk_amount / sl_distance
-    return max(contracts, min_amount)
+        return 0.0
+    return risk_amount / sl_distance
 
 
 # ============================================================
@@ -160,7 +176,8 @@ def calculate_contracts(balance_usdt: float, entry_price: float,
 def execute_signal_trade(exchange, symbol: str, timeframe: str,
                           signal: dict, risk_config: dict,
                           telegram_config: dict, logger: logging.Logger,
-                          max_positions: int = 1) -> bool:
+                          max_positions: int = 1,
+                          signal_candle_ts: str = '') -> bool:
     side               = signal['side']
     leverage           = int(risk_config.get('leverage', 10))
     margin_mode        = risk_config.get('margin_mode', 'isolated')
@@ -182,10 +199,34 @@ def execute_signal_trade(exchange, symbol: str, timeframe: str,
 
     contracts = calculate_contracts(balance, current_price, sl_price, min_amount, risk_per_trade_pct)
 
-    notional = contracts * current_price
-    if notional < MIN_NOTIONAL_USDT:
-        logger.warning(f"Notional {notional:.2f} USDT zu klein (< {MIN_NOTIONAL_USDT}). Kein Trade.")
+    # --- Position-Groessen-Validierung (titanbot-Stil) ---
+    # 1. Exchange-Mindestmenge pruefen
+    if contracts > 0 and contracts < min_amount:
+        logger.warning(
+            f"{symbol}: Risiko-Contracts {contracts:.6f} < Exchange-Minimum {min_amount}. "
+            f"Ueberspringe Trade — Position zu klein fuer korrektes Risk-Management."
+        )
         return False
+
+    notional = contracts * current_price
+
+    # 2. Mindest-Notional pruefen — auf Minimum anheben falls noetig, aber Margin pruefen
+    if notional < MIN_NOTIONAL_USDT:
+        contracts_min = MIN_NOTIONAL_USDT / current_price
+        notional_min  = MIN_NOTIONAL_USDT
+        margin_min    = notional_min / leverage
+        if margin_min > balance:
+            logger.warning(
+                f"{symbol}: Min-Notional-Anhebung ({notional_min:.2f} USDT) benoetigt "
+                f"Margin {margin_min:.2f} USDT > Kapital {balance:.2f} USDT. Kein Trade."
+            )
+            return False
+        logger.info(
+            f"{symbol}: Notional {notional:.2f} USDT < {MIN_NOTIONAL_USDT} USDT "
+            f"— angehoben auf {notional_min:.2f} USDT (Margin: {margin_min:.2f} USDT)."
+        )
+        contracts = contracts_min
+        notional  = notional_min
 
     # Bestehende Orders stornieren (verhindert Stacking bei erneutem Signal)
     try:
@@ -274,6 +315,10 @@ def execute_signal_trade(exchange, symbol: str, timeframe: str,
         except Exception as ce:
             logger.error(f"Fehler beim Stornieren: {ce}")
         return False
+
+    # Signalkerze merken — verhindert Wiedereintritt in derselben Kerze
+    if signal_candle_ts:
+        set_last_signal_ts(symbol, signal_candle_ts)
 
     # Telegram
     direction_emoji = "🟢" if side == 'long' else "🔴"

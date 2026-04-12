@@ -95,6 +95,9 @@ def run_portfolio_simulation(start_capital: float,
     trade_history  = []
 
     for ts in sorted_ts:
+        # Strategien die in diesem Timestamp geschlossen wurden — kein Sofort-Wiedereinstieg
+        closed_this_ts: set = set()
+
         # 1. Offene Positionen checken (SL/TP-Pruefung)
         for fname in list(open_positions.keys()):
             strat = processed[fname]
@@ -150,6 +153,7 @@ def run_portfolio_simulation(start_capital: float,
                     'sl_dist_pct': sl_dist_pct,
                 })
                 del open_positions[fname]
+                closed_this_ts.add(fname)
 
         if equity <= 0:
             break
@@ -162,6 +166,9 @@ def run_portfolio_simulation(start_capital: float,
 
         for fname, strat in processed.items():
             if fname in open_positions:
+                continue
+            # Kein Sofort-Wiedereinstieg in derselben Kerze (entspricht Backtester-Verhalten)
+            if fname in closed_this_ts:
                 continue
             df = strat['df']
             if ts not in df.index:

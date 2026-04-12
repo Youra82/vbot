@@ -40,6 +40,7 @@ from vbot.utils.trade_manager import (
     execute_signal_trade,
     check_position_status,
     read_global_state,
+    get_last_signal_ts,
 )
 from vbot.strategy.fibo_logic import get_fibo_signal, get_all_fibo_levels_info
 
@@ -176,6 +177,17 @@ def run_for_account(account: dict, telegram_config: dict,
             logger.info(f"Kein Fibo-Signal fuer {symbol}.")
             return
 
+        # --- Ein-Trade-pro-Kerze-Schutz ---
+        # Timestamp der Signalkerze (letzte abgeschlossene Kerze = df.iloc[-2])
+        signal_candle_ts = str(df.index[-2])
+        last_ts = get_last_signal_ts(symbol)
+        if last_ts == signal_candle_ts:
+            logger.info(
+                f"{symbol}: Signalkerze {signal_candle_ts} wurde bereits gehandelt "
+                f"— warte auf neue Kerze."
+            )
+            return
+
         # Alle Fibo-Level ins Log schreiben (zur Analyse)
         prev_high = signal.get('prev_high', 0)
         prev_low  = signal.get('prev_low', 0)
@@ -196,6 +208,7 @@ def run_for_account(account: dict, telegram_config: dict,
             exchange, symbol, timeframe, signal,
             risk_config, telegram_config, logger,
             max_positions=max_positions,
+            signal_candle_ts=signal_candle_ts,
         )
 
         if success:
