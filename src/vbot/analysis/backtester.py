@@ -133,7 +133,11 @@ def run_backtest(df: pd.DataFrame, config: dict,
     sig_cfg   = config.get('signal', {})
     leverage  = int(risk_cfg.get('leverage', 10))
     risk_pct  = float(risk_cfg.get('risk_per_trade_pct', 1.0))
-    warmup    = max(5, int(sig_cfg.get('confirm_overlap_window', 0)) + 3)
+    adx_period = int(sig_cfg.get('adx_period', 14))
+    adx_max    = float(sig_cfg.get('adx_max', 0.0))
+    # ADX benoetigt period*2+1 Kerzen; +1 weil fibo_logic iloc[:-1] ausschneidet
+    adx_warmup = (adx_period * 2 + 2) if adx_max > 0 else 0
+    warmup     = max(5, int(sig_cfg.get('confirm_overlap_window', 0)) + 3, adx_warmup)
 
     result = BacktestResult(
         symbol=symbol, timeframe=timeframe,

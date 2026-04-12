@@ -42,8 +42,8 @@ _TF_MIN_TRADES = {
 
 # Walk-Forward-Split: 70% Training, 30% Test
 _WFV_TRAIN_RATIO = 0.70
-# R:R-Cap im Score (verhindert dass unrealistische 1:30+ dominieren)
-_RR_SCORE_CAP    = 20.0
+# R:R-Cap im Score (Werte > 1:5 sind live kaum reproduzierbar)
+_RR_SCORE_CAP    = 5.0
 
 
 def _min_trades(timeframe: str) -> int:
@@ -142,6 +142,15 @@ def _make_objective(df, symbol, timeframe, capital, max_dd, min_wr, max_rr, _sta
                 "confirm_overlap_window": trial.suggest_int(
                     "confirm_overlap_window", 0, 5
                 ),
+                # R:R-Filter: erzwingt Mindest-Reward-Risiko-Verhaeltnis
+                "min_rr":                trial.suggest_categorical(
+                    "min_rr", [0.0, 1.0, 1.5, 2.0]
+                ),
+                # ADX-Filter: blockiert Trades in starken Trends
+                "adx_period":            14,
+                "adx_max":               trial.suggest_categorical(
+                    "adx_max", [0, 20, 25, 30, 35]
+                ),
             },
             "risk": {
                 "risk_per_trade_pct": risk_pct,
@@ -189,15 +198,17 @@ def _make_objective(df, symbol, timeframe, capital, max_dd, min_wr, max_rr, _sta
         if max_rr > 0 and r_test.avg_rr > max_rr:
             return -999.0
 
-        # ── Score: log-PnL + gecapptes R:R + Trade-Bonus ─────────────────
-        # log1p verhindert dass Millionen-PnL den Score dominieren
+        # ── Score: log-PnL + R:R (stark gewichtet) + Trade-Bonus (schwach) ──
+        # log1p verhindert dass hoher PnL allein dominiert
         train_score = math.log1p(max(0.0, r_train.pnl_pct))
         test_score  = math.log1p(max(0.0, r_test.pnl_pct))
         # 70% Gewicht auf Out-of-Sample
         pnl_score   = train_score * 0.30 + test_score * 0.70
-        # R:R auf 20 deckeln (1:31 ist live nicht reproduzierbar)
-        rr_bonus    = min(r_test.avg_rr, _RR_SCORE_CAP) * 0.5
-        trade_bonus = math.log1p(r_test.total_trades) * 2.0
+        # R:R stark belohnen (cap bei 5 — darueber ist live nicht reproduzierbar)
+        # Faktor 2.0 statt 0.5: R:R=2 gibt +4 Punkte statt +1
+        rr_bonus    = min(r_test.avg_rr, _RR_SCORE_CAP) * 2.0
+        # Trade-Bonus stark reduziert — verhindert Drift zu 0.786 (viele Trades, schlechtes R:R)
+        trade_bonus = math.log1p(r_test.total_trades) * 0.5
 
         return pnl_score + rr_bonus + trade_bonus
 
@@ -283,6 +294,9 @@ def optimize(symbol: str, timeframe: str,
             "min_candle_range_pct":   round(params["min_candle_range_pct"], 2),
             "sl_buffer_pct":          round(params["sl_buffer_pct"], 3),
             "confirm_overlap_window": int(params["confirm_overlap_window"]),
+            "min_rr":                 float(params["min_rr"]),
+            "adx_period":             14,
+            "adx_max":                int(params["adx_max"]),
         },
         "risk": {
             "leverage":           params["leverage"],

@@ -46,6 +46,55 @@ from typing import Optional
 FIBO_LEVELS = [0.236, 0.382, 0.5, 0.618, 0.786]
 
 
+def _calculate_adx(df: pd.DataFrame, period: int = 14) -> float:
+    """Berechnet den letzten ADX-Wert (Average Directional Index) per Wilder-Glaettung.
+    Gibt 0.0 zurueck wenn nicht genug Kerzen vorhanden (kein Filter → Trade erlaubt)."""
+    needed = period * 2 + 1
+    if len(df) < needed:
+        return 0.0
+
+    high  = df['high'].values[-needed:]
+    low   = df['low'].values[-needed:]
+    close = df['close'].values[-needed:]
+    n     = len(high)
+
+    tr_arr  = np.empty(n - 1)
+    dmp_arr = np.empty(n - 1)
+    dmn_arr = np.empty(n - 1)
+
+    for i in range(1, n):
+        tr_arr[i-1]  = max(high[i] - low[i],
+                            abs(high[i] - close[i-1]),
+                            abs(low[i]  - close[i-1]))
+        h_diff = high[i] - high[i-1]
+        l_diff = low[i-1] - low[i]
+        dmp_arr[i-1] = h_diff if h_diff > l_diff and h_diff > 0 else 0.0
+        dmn_arr[i-1] = l_diff if l_diff > h_diff and l_diff > 0 else 0.0
+
+    def _wilder(arr: np.ndarray, p: int) -> np.ndarray:
+        out = np.zeros(len(arr))
+        out[p - 1] = arr[:p].sum()
+        for i in range(p, len(arr)):
+            out[i] = out[i-1] - out[i-1] / p + arr[i]
+        return out
+
+    atr    = _wilder(tr_arr,  period)
+    dmp_sm = _wilder(dmp_arr, period)
+    dmn_sm = _wilder(dmn_arr, period)
+
+    with np.errstate(divide='ignore', invalid='ignore'):
+        di_plus  = np.where(atr > 0, 100.0 * dmp_sm / atr, 0.0)
+        di_minus = np.where(atr > 0, 100.0 * dmn_sm / atr, 0.0)
+        di_sum   = di_plus + di_minus
+        dx       = np.where(di_sum > 0, 100.0 * np.abs(di_plus - di_minus) / di_sum, 0.0)
+
+    dx_slice = dx[period - 1:]
+    if len(dx_slice) < period:
+        return 0.0
+    adx_arr = _wilder(dx_slice, period)
+    return float(adx_arr[-1])
+
+
 def calculate_fibo_levels(candle_high: float, candle_low: float) -> dict:
     """
     Berechnet Fibonacci-Retracement-Level fuer eine Kerze.
@@ -105,6 +154,9 @@ def get_fibo_signal(df: pd.DataFrame, signal_config: dict) -> dict:
     min_range_pct       = float(signal_config.get('min_candle_range_pct', 0.2))
     sl_buffer_pct       = float(signal_config.get('sl_buffer_pct', 0.15))
     confirm_window      = int(signal_config.get('confirm_overlap_window', 0))
+    min_rr              = float(signal_config.get('min_rr', 0.0))
+    adx_period          = int(signal_config.get('adx_period', 14))
+    adx_max             = float(signal_config.get('adx_max', 0.0))
 
     if fibo_tp_level not in FIBO_LEVELS:
         # Naechstes gueltiges Level waehlen
@@ -187,7 +239,26 @@ def get_fibo_signal(df: pd.DataFrame, signal_config: dict) -> dict:
         no_signal['reason'] = f"TP-Abstand zu gering: {tp_dist_pct:.4f}%"
         return no_signal
 
-    # --- Filter 4: Trend-Bestaetigung (optional) ---
+    # --- Filter 4: Mindest-R:R (optional) ---
+    if min_rr > 0 and rr_ratio < min_rr:
+        no_signal['reason'] = (
+            f"R:R zu schlecht: 1:{rr_ratio:.2f} < Minimum 1:{min_rr:.1f} "
+            f"(TP-Abstand {tp_dist_pct:.3f}% | SL-Abstand {sl_dist_pct:.3f}%)"
+        )
+        return no_signal
+
+    # --- Filter 5: ADX Trend-Filter (optional) ---
+    # ADX > adx_max → Trendmarkt, kein Mean-Reversion Trade
+    if adx_max > 0:
+        adx_val = _calculate_adx(df.iloc[:-1], adx_period)  # nur abgeschlossene Kerzen
+        if adx_val > adx_max:
+            no_signal['reason'] = (
+                f"ADX Trendmarkt: {adx_val:.1f} > {adx_max:.0f} "
+                f"(Mean-Reversion unwahrscheinlich)"
+            )
+            return no_signal
+
+    # --- Filter 6: Trend-Bestaetigung (optional) ---
     if confirm_window > 0 and len(df) >= confirm_window + 2:
         trend_signal = _check_trend_confirmation(df, side, confirm_window)
         if not trend_signal:
