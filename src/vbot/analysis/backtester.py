@@ -207,10 +207,28 @@ def run_backtest(df: pd.DataFrame, config: dict,
         if signal['side'] is None:
             continue
 
-        # Entry am Open der aktuellen Kerze
-        entry_price = float(open_arr[i])
-        sl_price    = signal['sl_price']
-        tp_price    = signal['tp_price']
+        # Entry am Fibo-Level (Limit-Order: Kerze muss das Level erreichen)
+        fibo_entry = signal['entry_price']
+        sl_price   = signal['sl_price']
+        tp_price   = signal['tp_price']
+        side       = signal['side']
+
+        high_i = high_arr[i]
+        low_i  = low_arr[i]
+
+        # Pruefen ob die aktuelle Kerze das Fibo-Entry-Level erreicht
+        if side == 'long':
+            if open_arr[i] >= fibo_entry:
+                continue  # Kerze oeffnete bereits ueber Entry → Level uebersprungen
+            if high_i < fibo_entry:
+                continue  # Kerze hat Level nicht erreicht → kein Fill
+        else:  # short
+            if open_arr[i] <= fibo_entry:
+                continue  # Kerze oeffnete bereits unter Entry → Level uebersprungen
+            if low_i > fibo_entry:
+                continue  # Kerze hat Level nicht erreicht → kein Fill
+
+        entry_price = fibo_entry
 
         # Positionsgroesse risiko-basiert
         sl_distance = abs(entry_price - sl_price)
@@ -224,22 +242,55 @@ def run_backtest(df: pd.DataFrame, config: dict,
         if notional < MIN_NOTIONAL_USDT:
             continue
 
-        # Margin-Pruefung: Pflichtmarge darf verfuegbares Kapital nicht uebersteigen
+        # Margin-Pruefung
         margin = notional / leverage
         if margin > capital:
+            continue
+
+        # Same-Candle SL/TP-Check: wurde SL oder TP noch in der Einstiegskerze getroffen?
+        hit_sl_same = (side == 'long'  and low_i  <= sl_price) or \
+                      (side == 'short' and high_i >= sl_price)
+        hit_tp_same = (side == 'long'  and high_i >= tp_price) or \
+                      (side == 'short' and low_i  <= tp_price)
+
+        if hit_sl_same or hit_tp_same:
+            # Wenn beides: konservativ → SL (schlimmster Fall)
+            if hit_sl_same:
+                exit_p, result_str = sl_price, 'loss'
+            else:
+                exit_p, result_str = tp_price, 'win'
+
+            price_diff = exit_p - entry_price
+            if side == 'short':
+                price_diff = -price_diff
+            fees_usdt = notional * FEE_PCT * 2
+            pnl_usdt  = price_diff * contracts - fees_usdt
+
+            trade = BacktestTrade(
+                bar_idx=i, timestamp=ts, direction=side,
+                entry=entry_price, sl=sl_price, tp=tp_price,
+                contracts=contracts, fibo_level=signal.get('fibo_level', 0.618),
+                exit_price=exit_p, exit_bar=i, result=result_str,
+                pnl_usdt=pnl_usdt, pnl_pct=pnl_usdt / capital * 100, hold_bars=0,
+            )
+            capital += pnl_usdt
+            result.trades.append(trade)
+            if capital <= 0:
+                logger.warning("Kapital auf 0 gefallen. Backtest beendet.")
+                break
             continue
 
         open_trade = BacktestTrade(
             bar_idx=i,
             timestamp=ts,
-            direction=signal['side'],
+            direction=side,
             entry=entry_price,
             sl=sl_price,
             tp=tp_price,
             contracts=contracts,
             fibo_level=signal.get('fibo_level', 0.618),
         )
-        logger.debug(f"[{ts}] {signal['side'].upper()} Entry @ {entry_price:.4f} | "
+        logger.debug(f"[{ts}] {side.upper()} Entry @ {entry_price:.4f} | "
                      f"SL {sl_price:.4f} | TP {tp_price:.4f} | Fibo {signal['fibo_level']}")
 
     # Offenen Trade am Ende mit letztem Close-Preis schliessen

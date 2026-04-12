@@ -142,9 +142,9 @@ def _make_objective(df, symbol, timeframe, capital, max_dd, min_wr, max_rr, _sta
                 "confirm_overlap_window": trial.suggest_int(
                     "confirm_overlap_window", 0, 5
                 ),
-                # R:R-Filter: erzwingt Mindest-Reward-Risiko-Verhaeltnis
-                "min_rr":                trial.suggest_categorical(
-                    "min_rr", [0.0, 1.0, 1.5, 2.0]
+                # Festes R:R: TP = Entry +/- sl_abstand * multiplier
+                "tp_rr_multiplier":      trial.suggest_categorical(
+                    "tp_rr_multiplier", [1.5, 2.0, 2.5, 3.0]
                 ),
                 # ADX-Filter: blockiert Trades in starken Trends
                 "adx_period":            14,
@@ -294,7 +294,7 @@ def optimize(symbol: str, timeframe: str,
             "min_candle_range_pct":   round(params["min_candle_range_pct"], 2),
             "sl_buffer_pct":          round(params["sl_buffer_pct"], 3),
             "confirm_overlap_window": int(params["confirm_overlap_window"]),
-            "min_rr":                 float(params["min_rr"]),
+            "tp_rr_multiplier":       float(params["tp_rr_multiplier"]),
             "adx_period":             14,
             "adx_max":                int(params["adx_max"]),
         },

@@ -281,13 +281,16 @@ def execute_signal_trade(exchange, symbol: str, timeframe: str,
 
     time.sleep(0.5)
 
-    # 3. Entry Trigger-Limit
+    # 3. Entry Trigger-Limit am Fibo-Level
+    # Fibo-Entry ist ein Limit: neue Kerze muss das Level "eintauchen".
+    # SHORT: Preis faellt VON OBEN auf Fibo-Level → Sell-Stop
+    # LONG:  Preis steigt VON UNTEN auf Fibo-Level → Buy-Stop
     if side == 'short':
-        trigger_price = current_price * 1.0001
-        limit_price   = current_price * (1 - 0.0005)
+        trigger_price = current_price * 0.9999   # knapp unter Fibo-Level (faellt dorthin)
+        limit_price   = current_price * (1 - 0.001)
     else:
-        trigger_price = current_price * 0.9999
-        limit_price   = current_price * (1 + 0.0005)
+        trigger_price = current_price * 1.0001   # knapp ueber Fibo-Level (steigt dorthin)
+        limit_price   = current_price * 1.001
 
     try:
         entry_order    = exchange.place_trigger_limit_order(

@@ -122,22 +122,26 @@ def calculate_fibo_levels(candle_high: float, candle_low: float) -> dict:
 
 def get_fibo_signal(df: pd.DataFrame, signal_config: dict) -> dict:
     """
-    Berechnet das Fibonacci-Candle-Overlap Signal auf Basis des letzten
-    abgeschlossenen OHLCV-Datensatzes.
+    Fibonacci Candle Overlap Signal — Fibo-Level ALS ENTRY (Limit-Order).
 
-    df: OHLCV DataFrame mit Spalten [open, high, low, close, volume]
-        Die letzte Zeile (df.iloc[-1]) ist die aktuell noch OFFENE Kerze.
-        Die vorletzte Zeile (df.iloc[-2]) ist die letzte ABGESCHLOSSENE Kerze.
+    Konzept:
+      Fibo-Retracement wird auf die letzte abgeschlossene Kerze gelegt.
+      Das gewaehlte Fibo-Level (z.B. 0.786) innerhalb dieser Kerze ist der
+      Entry-Trigger: die neue Kerze muss bis zu diesem Level "eintauchen".
+      TP = Entry +/- sl_abstand * tp_rr_multiplier (festes R:R).
+
+    df: OHLCV DataFrame — letzte Zeile (iloc[-1]) ist die aktuell offene Kerze,
+        vorletzte (iloc[-2]) ist die letzte abgeschlossene Signalkerze.
 
     Returns dict:
-      side       : 'long', 'short' oder None (kein Signal)
-      entry_price: aktueller Kurs (Close der letzten abgeschl. Kerze)
-      sl_price   : Stop Loss Preis
-      tp_price   : Take Profit Preis (Fibo-Level)
-      fibo_level : genutztes Fibo-Level (z.B. 0.618)
+      side       : 'long', 'short' oder None
+      entry_price: Fibo-Level (Limit-Order-Preis)
+      sl_price   : Stop Loss
+      tp_price   : Take Profit (festes R:R)
+      fibo_level : genutztes Fibo-Level (Eintauch-Tiefe)
       prev_high  : Hoch der Signalkerze
       prev_low   : Tief der Signalkerze
-      reason     : Beschreibung des Signals
+      reason     : Beschreibung
     """
     no_signal = {
         'side': None, 'entry_price': None, 'sl_price': None, 'tp_price': None,
@@ -149,29 +153,26 @@ def get_fibo_signal(df: pd.DataFrame, signal_config: dict) -> dict:
         return no_signal
 
     # Parameter aus Config
-    fibo_tp_level       = float(signal_config.get('fibo_tp_level', 0.618))
-    min_body_pct        = float(signal_config.get('min_candle_body_pct', 0.3))
-    min_range_pct       = float(signal_config.get('min_candle_range_pct', 0.2))
-    sl_buffer_pct       = float(signal_config.get('sl_buffer_pct', 0.15))
-    confirm_window      = int(signal_config.get('confirm_overlap_window', 0))
-    min_rr              = float(signal_config.get('min_rr', 0.0))
-    adx_period          = int(signal_config.get('adx_period', 14))
-    adx_max             = float(signal_config.get('adx_max', 0.0))
+    fibo_entry_level = float(signal_config.get('fibo_tp_level', 0.618))  # Entry-Tiefe
+    min_body_pct     = float(signal_config.get('min_candle_body_pct', 0.3))
+    min_range_pct    = float(signal_config.get('min_candle_range_pct', 0.2))
+    sl_buffer_pct    = float(signal_config.get('sl_buffer_pct', 0.15))
+    confirm_window   = int(signal_config.get('confirm_overlap_window', 0))
+    tp_rr_multiplier = float(signal_config.get('tp_rr_multiplier', 2.0))
+    adx_period       = int(signal_config.get('adx_period', 14))
+    adx_max          = float(signal_config.get('adx_max', 0.0))
 
-    if fibo_tp_level not in FIBO_LEVELS:
-        # Naechstes gueltiges Level waehlen
-        fibo_tp_level = min(FIBO_LEVELS, key=lambda x: abs(x - fibo_tp_level))
+    if fibo_entry_level not in FIBO_LEVELS:
+        fibo_entry_level = min(FIBO_LEVELS, key=lambda x: abs(x - fibo_entry_level))
 
-    # Letzte abgeschlossene Kerze (vorletzte Zeile wegen noch offener aktueller Kerze)
-    prev = df.iloc[-2]
-    curr = df.iloc[-1]
+    prev = df.iloc[-2]  # letzte abgeschlossene Kerze (Signalkerze)
+    curr = df.iloc[-1]  # aktuell offene Kerze (Referenz fuer Range-Filter)
 
     prev_open  = float(prev['open'])
     prev_high  = float(prev['high'])
     prev_low   = float(prev['low'])
     prev_close = float(prev['close'])
-
-    entry_price = float(curr['open'])  # Open der neuen Kerze = Close der vorherigen
+    curr_open  = float(curr['open'])  # Marktpreis zum Signal-Zeitpunkt
 
     # --- Filter 1: Kerzenkörper-Verhaeltnis ---
     candle_range = prev_high - prev_low
@@ -179,7 +180,7 @@ def get_fibo_signal(df: pd.DataFrame, signal_config: dict) -> dict:
         no_signal['reason'] = 'Ungueltige Kerze (range=0)'
         return no_signal
 
-    body_size = abs(prev_close - prev_open)
+    body_size  = abs(prev_close - prev_open)
     body_ratio = body_size / candle_range
 
     if body_ratio < min_body_pct:
@@ -189,49 +190,48 @@ def get_fibo_signal(df: pd.DataFrame, signal_config: dict) -> dict:
         )
         return no_signal
 
-    # --- Filter 2: Mindest-Range ---
-    range_pct = candle_range / entry_price * 100.0
+    # --- Filter 2: Mindest-Range (bezogen auf Marktpreis) ---
+    range_pct = candle_range / curr_open * 100.0
     if range_pct < min_range_pct:
-        no_signal['reason'] = (
-            f"Kerzenrange zu klein: {range_pct:.3f}% < {min_range_pct:.3f}%"
-        )
+        no_signal['reason'] = f"Kerzenrange zu klein: {range_pct:.3f}% < {min_range_pct:.3f}%"
         return no_signal
 
     # --- Fibonacci-Level berechnen ---
     fibo = calculate_fibo_levels(prev_high, prev_low)
 
-    # --- Richtung bestimmen ---
-    is_bullish = prev_close > prev_open  # vorherige Kerze bullish -> SHORT Trade
-    is_bearish = prev_close < prev_open  # vorherige Kerze bearish -> LONG Trade
+    # --- Richtung + Entry am Fibo-Level + SL/TP ---
+    is_bullish = prev_close > prev_open  # bullische Vorkerze -> SHORT
+    is_bearish = prev_close < prev_open  # baerische Vorkerze -> LONG
 
     if is_bullish:
-        side     = 'short'
-        tp_price = fibo['levels_from_high'][fibo_tp_level]
-        sl_price = prev_high * (1.0 + sl_buffer_pct / 100.0)
-
-        # TP muss UNTER dem Entry liegen (sonst kein sinnvoller Short)
-        if tp_price >= entry_price:
-            no_signal['reason'] = (
-                f"TP ({tp_price:.6f}) >= Entry ({entry_price:.6f}) - kein sinnvoller Short"
-            )
+        # SHORT: neue Kerze taucht VON OBEN in die bullische Vorkerze ein
+        # Entry = Fibo-Level gemessen vom HIGH nach unten (z.B. 0.786 = 78.6% vom High)
+        side        = 'short'
+        entry_price = fibo['levels_from_high'][fibo_entry_level]
+        sl_price    = prev_high * (1.0 + sl_buffer_pct / 100.0)
+        sl_dist     = sl_price - entry_price
+        if sl_dist <= 0:
+            no_signal['reason'] = 'SL-Abstand ungueltig (SHORT)'
             return no_signal
+        tp_price = entry_price - sl_dist * tp_rr_multiplier
 
     elif is_bearish:
-        side     = 'long'
-        tp_price = fibo['levels_from_low'][fibo_tp_level]
-        sl_price = prev_low * (1.0 - sl_buffer_pct / 100.0)
-
-        # TP muss UEBER dem Entry liegen (sonst kein sinnvoller Long)
-        if tp_price <= entry_price:
-            no_signal['reason'] = (
-                f"TP ({tp_price:.6f}) <= Entry ({entry_price:.6f}) - kein sinnvoller Long"
-            )
+        # LONG: neue Kerze taucht VON UNTEN in die baerische Vorkerze ein
+        # Entry = Fibo-Level gemessen vom LOW nach oben (z.B. 0.786 = 78.6% vom Low)
+        side        = 'long'
+        entry_price = fibo['levels_from_low'][fibo_entry_level]
+        sl_price    = prev_low * (1.0 - sl_buffer_pct / 100.0)
+        sl_dist     = entry_price - sl_price
+        if sl_dist <= 0:
+            no_signal['reason'] = 'SL-Abstand ungueltig (LONG)'
             return no_signal
+        tp_price = entry_price + sl_dist * tp_rr_multiplier
+
     else:
         no_signal['reason'] = 'Doji-Kerze (open == close)'
         return no_signal
 
-    # --- Filter 3: Mindest-TP-Abstand (Trade muss sich lohnen) ---
+    # --- Filter 3: Mindest-TP-Abstand ---
     tp_dist_pct = abs(tp_price - entry_price) / entry_price * 100.0
     sl_dist_pct = abs(sl_price - entry_price) / entry_price * 100.0
 
@@ -239,18 +239,9 @@ def get_fibo_signal(df: pd.DataFrame, signal_config: dict) -> dict:
         no_signal['reason'] = f"TP-Abstand zu gering: {tp_dist_pct:.4f}%"
         return no_signal
 
-    # --- Filter 4: Mindest-R:R (optional) ---
-    if min_rr > 0 and rr_ratio < min_rr:
-        no_signal['reason'] = (
-            f"R:R zu schlecht: 1:{rr_ratio:.2f} < Minimum 1:{min_rr:.1f} "
-            f"(TP-Abstand {tp_dist_pct:.3f}% | SL-Abstand {sl_dist_pct:.3f}%)"
-        )
-        return no_signal
-
-    # --- Filter 5: ADX Trend-Filter (optional) ---
-    # ADX > adx_max → Trendmarkt, kein Mean-Reversion Trade
+    # --- Filter 4: ADX Trend-Filter (optional) ---
     if adx_max > 0:
-        adx_val = _calculate_adx(df.iloc[:-1], adx_period)  # nur abgeschlossene Kerzen
+        adx_val = _calculate_adx(df.iloc[:-1], adx_period)
         if adx_val > adx_max:
             no_signal['reason'] = (
                 f"ADX Trendmarkt: {adx_val:.1f} > {adx_max:.0f} "
@@ -258,7 +249,7 @@ def get_fibo_signal(df: pd.DataFrame, signal_config: dict) -> dict:
             )
             return no_signal
 
-    # --- Filter 6: Trend-Bestaetigung (optional) ---
+    # --- Filter 5: Trend-Bestaetigung (optional) ---
     if confirm_window > 0 and len(df) >= confirm_window + 2:
         trend_signal = _check_trend_confirmation(df, side, confirm_window)
         if not trend_signal:
@@ -268,27 +259,25 @@ def get_fibo_signal(df: pd.DataFrame, signal_config: dict) -> dict:
             )
             return no_signal
 
-    rr_ratio = tp_dist_pct / sl_dist_pct if sl_dist_pct > 0 else 0
-    direction_str = 'bullisch -> SHORT Overlap' if side == 'short' else 'baerig -> LONG Overlap'
-
+    direction_str = 'bullisch -> SHORT Eintauchen' if side == 'short' else 'baerig -> LONG Eintauchen'
     reason = (
-        f"Fibo {fibo_tp_level*100:.1f}% Overlap | Vorherige Kerze {direction_str} | "
-        f"Range: {range_pct:.3f}% | Body: {body_ratio:.2%} | R:R=1:{rr_ratio:.1f}"
+        f"Fibo {fibo_entry_level*100:.1f}% Entry | {direction_str} | "
+        f"Range: {range_pct:.3f}% | Body: {body_ratio:.2%} | R:R=1:{tp_rr_multiplier:.1f}"
     )
 
     return {
-        'side':        side,
-        'entry_price': entry_price,
-        'sl_price':    sl_price,
-        'tp_price':    tp_price,
-        'fibo_level':  fibo_tp_level,
-        'prev_high':   prev_high,
-        'prev_low':    prev_low,
+        'side':             side,
+        'entry_price':      entry_price,   # Fibo-Level = Limit-Order-Preis
+        'sl_price':         sl_price,
+        'tp_price':         tp_price,
+        'fibo_level':       fibo_entry_level,
+        'prev_high':        prev_high,
+        'prev_low':         prev_low,
         'candle_range_pct': range_pct,
-        'body_ratio':  body_ratio,
-        'tp_dist_pct': tp_dist_pct,
-        'sl_dist_pct': sl_dist_pct,
-        'reason':      reason,
+        'body_ratio':       body_ratio,
+        'tp_dist_pct':      tp_dist_pct,
+        'sl_dist_pct':      sl_dist_pct,
+        'reason':           reason,
     }
 
 

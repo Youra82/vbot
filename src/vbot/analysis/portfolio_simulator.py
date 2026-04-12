@@ -72,10 +72,11 @@ def run_portfolio_simulation(start_capital: float,
         for i in range(warmup, len(df)):
             sig = get_fibo_signal(df.iloc[:i], sig_cfg)
             signals.append({
-                'side':       sig['side'],
-                'sl_price':   sig.get('sl_price'),
-                'tp_price':   sig.get('tp_price'),
-                'fibo_level': sig.get('fibo_level'),
+                'side':        sig['side'],
+                'sl_price':    sig.get('sl_price'),
+                'tp_price':    sig.get('tp_price'),
+                'fibo_level':  sig.get('fibo_level'),
+                'entry_price': sig.get('entry_price'),  # Fibo-Level als Limit-Entry
             })
         strat['signals'] = signals
 
@@ -185,10 +186,27 @@ def run_portfolio_simulation(start_capital: float,
             leverage = int(risk_cfg.get('leverage', 10))
             risk_pct = float(risk_cfg.get('risk_per_trade_pct', 1.0))
 
-            entry_price = float(df.loc[ts, 'open'])
-            sl_price    = sig['sl_price']
-            tp_price    = sig['tp_price']
+            # Fibo-Level als Entry: Kerze muss das Level erreichen
+            fibo_entry = sig.get('entry_price')
+            sl_price   = sig['sl_price']
+            tp_price   = sig['tp_price']
 
+            if fibo_entry is None:
+                continue
+
+            row    = df.loc[ts]
+            high_c = float(row['high'])
+            low_c  = float(row['low'])
+            open_c = float(row['open'])
+
+            if sig['side'] == 'long':
+                if open_c >= fibo_entry or high_c < fibo_entry:
+                    continue  # Level nicht erreicht oder uebersprungen
+            else:
+                if open_c <= fibo_entry or low_c > fibo_entry:
+                    continue
+
+            entry_price = fibo_entry
             sl_dist = abs(entry_price - sl_price)
             if sl_dist <= 0:
                 continue
