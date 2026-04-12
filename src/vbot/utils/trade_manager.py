@@ -212,8 +212,10 @@ def execute_signal_trade(exchange, symbol: str, timeframe: str,
 
     # 2. Mindest-Notional pruefen — auf Minimum anheben falls noetig, aber Margin pruefen
     if notional < MIN_NOTIONAL_USDT:
-        contracts_min = MIN_NOTIONAL_USDT / current_price
-        notional_min  = MIN_NOTIONAL_USDT
+        # 1% Puffer: Trigger-Limit-Entry wird bei trigger_price (0.9999x/1.0001x) bewertet,
+        # daher wuerde exakt 5.00 USDT Notional auf 4.9995 USDT fallen → Bitget 43027.
+        notional_min  = MIN_NOTIONAL_USDT * 1.01
+        contracts_min = notional_min / current_price
         margin_min    = notional_min / leverage
         if margin_min > balance:
             logger.warning(
