@@ -212,11 +212,14 @@ def execute_signal_trade(exchange, symbol: str, timeframe: str,
 
     # 2. Mindest-Notional pruefen — auf Minimum anheben falls noetig, aber Margin pruefen
     if notional < MIN_NOTIONAL_USDT:
-        # 1% Puffer: Trigger-Limit-Entry wird bei trigger_price (0.9999x/1.0001x) bewertet,
-        # daher wuerde exakt 5.00 USDT Notional auf 4.9995 USDT fallen → Bitget 43027.
-        notional_min  = MIN_NOTIONAL_USDT * 1.01
-        contracts_min = notional_min / current_price
-        margin_min    = notional_min / leverage
+        # Ceil-Runden: amount_to_precision trunciert (rundet ab), daher wuerde
+        # z.B. 5.05 USDT / AVAX-Preis -> 0.5562 AVAX -> truncate -> 0.55 AVAX -> 4.99 USDT < 5 USDT.
+        # exchange.amount_ceil_to_precision rundet AUFRUNDEND zur naechsten Step-Groesse,
+        # sodass das Notional nach Exchange-Rundung garantiert >= 5.05 USDT bleibt.
+        contracts_raw  = (MIN_NOTIONAL_USDT * 1.01) / current_price
+        contracts_min  = exchange.amount_ceil_to_precision(symbol, contracts_raw)
+        notional_min   = contracts_min * current_price
+        margin_min     = notional_min / leverage
         if margin_min > balance:
             logger.warning(
                 f"{symbol}: Min-Notional-Anhebung ({notional_min:.2f} USDT) benoetigt "

@@ -97,6 +97,30 @@ class Exchange:
         except Exception:
             return str(amount)
 
+    def amount_ceil_to_precision(self, symbol: str, amount: float) -> float:
+        """Rundet amount AUFRUNDEND zur naechsten gueltigen Step-Groesse.
+        Verhindert dass nach Truncate-Rundung die Mindest-Notional unterschritten wird."""
+        import math
+        try:
+            market = self.exchange.markets.get(symbol, {})
+            precision_info = market.get('precision', {}).get('amount')
+            if precision_info is None:
+                return amount
+            # ccxt gibt Dezimalstellen (int >= 0) oder Step-Groesse (float) an
+            if isinstance(precision_info, int) and precision_info >= 0:
+                step = 10 ** (-precision_info)
+            else:
+                step = float(precision_info)
+            if step <= 0:
+                return amount
+            # Aufrunden: ceil(amount / step) * step
+            ceiled = math.ceil(round(amount / step, 10)) * step
+            # Auf step-Praezision runden um Float-Artefakte zu vermeiden
+            decimals = max(0, -int(math.floor(math.log10(step)))) if step < 1 else 0
+            return round(ceiled, decimals)
+        except Exception:
+            return amount
+
     def price_to_precision(self, symbol: str, price: float) -> str:
         try:
             return self.exchange.price_to_precision(symbol, price)
