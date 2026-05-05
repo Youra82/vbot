@@ -734,6 +734,119 @@ def _generate_trades_excel(final_sim: dict, portfolio_files: list, capital: floa
         print(f"  {YELLOW}Telegram nicht konfiguriert — nur lokal gespeichert.{NC}")
 
 
+def run_replot(date_from: str, date_to: str, capital: float):
+    """Simuliert das aktive Portfolio neu und sendet Charts + Excel via Telegram."""
+    from vbot.analysis.backtester import run_backtest, load_ohlcv
+    from vbot.analysis.portfolio_simulator import run_portfolio_simulation
+
+    try:
+        with open(SETTINGS_FILE) as f:
+            settings = json.load(f)
+    except Exception as e:
+        print(f"{RED}settings.json lesen fehlgeschlagen: {e}{NC}")
+        return
+
+    active = [s for s in settings.get('live_trading_settings', {}).get('active_strategies', [])
+              if s.get('active')]
+    if not active:
+        print(f"{YELLOW}Keine aktiven Strategien in settings.json.{NC}")
+        return
+
+    active_pairs = {(s['symbol'], s['timeframe']) for s in active}
+
+    if not os.path.isdir(CONFIGS_DIR):
+        print(f"{RED}Kein Configs-Verzeichnis: {CONFIGS_DIR}{NC}")
+        return
+
+    cfg_files = sorted(f for f in os.listdir(CONFIGS_DIR)
+                       if f.startswith('config_') and f.endswith('.json'))
+    matching = [fname for fname in cfg_files
+                if _config_matches(fname, active_pairs)]
+
+    if not matching:
+        print(f"{RED}Keine Config-Dateien fuer aktive Strategien gefunden.{NC}")
+        return
+
+    print(f"\n--- vbot Replot (aktives Portfolio) ---")
+    print(f"Zeitraum: {date_from} -> {date_to} | Kapital: {capital:.0f} USDT")
+    print(f"{len(matching)} Config(s) gefunden.\n")
+
+    strategies_data  = {}
+    backtest_results = {}
+    all_results      = []
+
+    for fname in matching:
+        cfg_path = os.path.join(CONFIGS_DIR, fname)
+        try:
+            with open(cfg_path) as f:
+                config = json.load(f)
+        except Exception:
+            continue
+        symbol    = config.get('market', {}).get('symbol', '')
+        timeframe = config.get('market', {}).get('timeframe', '')
+        if not symbol or not timeframe:
+            continue
+        print(f"  Backtest: {fname}...")
+        df = load_ohlcv(symbol, timeframe, date_from, date_to)
+        if df.empty or len(df) < 10:
+            print(f"    {YELLOW}Keine Daten — uebersprungen.{NC}")
+            continue
+        strategies_data[fname] = {'symbol': symbol, 'timeframe': timeframe,
+                                   'df': df, 'config': config}
+        result = run_backtest(df, config, capital, symbol, timeframe)
+        backtest_results[fname] = result
+        all_results.append({
+            'filename':     fname,
+            'symbol':       symbol,
+            'timeframe':    timeframe,
+            'coin':         symbol.split('/')[0],
+            'pnl_pct':      result.pnl_pct,
+            'win_rate':     result.win_rate,
+            'max_dd':       result.max_drawdown_pct,
+            'avg_rr':       result.avg_rr,
+            'total_trades': result.total_trades,
+            'end_capital':  result.end_capital,
+            'in_portfolio': True,
+        })
+
+    if not strategies_data:
+        print(f"{RED}Keine Backtests erfolgreich.{NC}")
+        return
+
+    final_sim = run_portfolio_simulation(capital, strategies_data, date_from, date_to)
+    if not final_sim:
+        print(f"{RED}Portfolio-Simulation fehlgeschlagen.{NC}")
+        return
+
+    portfolio_files = list(strategies_data.keys())
+
+    print(f"\n{'='*60}")
+    print(f"{'REPLOT — AKTIVES PORTFOLIO':^60}")
+    print(f"{'='*60}")
+    for fn in portfolio_files:
+        r = next((x for x in all_results if x['filename'] == fn), None)
+        if r:
+            strat = f"{r['symbol'].split('/')[0]}/{r['timeframe']}"
+            print(f"  {strat:<20}  PnL={r['pnl_pct']:+.2f}%  WR={r['win_rate']:.1f}%  DD={r['max_dd']:.1f}%")
+    print(f"\n  Portfolio-Gesamt:")
+    _print_portfolio_result(final_sim, capital)
+
+    _generate_portfolio_chart(final_sim, all_results, portfolio_files,
+                               capital, date_from, date_to, backtest_results)
+    _generate_trades_excel(final_sim, portfolio_files, capital)
+
+
+def _config_matches(fname: str, active_pairs: set) -> bool:
+    cfg_path = os.path.join(CONFIGS_DIR, fname)
+    try:
+        with open(cfg_path) as f:
+            config = json.load(f)
+        m = config.get('market', {})
+        return (m.get('symbol'), m.get('timeframe')) in active_pairs
+    except Exception:
+        return False
+
+
 def _print_portfolio_result(result: dict, start_capital: float):
     sign  = '+' if result['total_pnl_pct'] >= 0 else ''
     color = GREEN if result['total_pnl_pct'] >= 0 else RED
@@ -771,6 +884,8 @@ if __name__ == "__main__":
     parser.add_argument('--target-max-dd', type=float, default=30.0)
     parser.add_argument('--min-wr',        type=float, default=0.0)
     parser.add_argument('--auto',          action='store_true')
+    parser.add_argument('--replot',        action='store_true',
+                        help='Replot fuer aktives Portfolio (keine Re-Optimierung)')
     parser.add_argument('--configs',       type=str,   default=None,
                         help="Leerzeichen-getrennte Liste von Config-Dateinamen")
     args = parser.parse_args()
@@ -779,6 +894,10 @@ if __name__ == "__main__":
     d_from   = args.date_from if args.date_from else '2024-01-01'
     d_to     = args.date_to   if args.date_to   else today
     cfg_list = args.configs.split() if args.configs else None
+
+    if args.replot:
+        run_replot(d_from, d_to, args.capital)
+        sys.exit(0)
 
     if args.mode == 1:
         run_all_configs_isolated(d_from, d_to, args.capital, cfg_list)

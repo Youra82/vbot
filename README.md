@@ -544,6 +544,19 @@ Der `auto_optimizer_scheduler.py`:
 `--force` überspringt den `enabled`-Check und den Zeitplan-Check.
 Nützlich um nach einer Konfigurationsänderung direkt zu testen, ob der Ablauf korrekt funktioniert.
 
+### Replot — Charts neu generieren (ohne Re-Optimierung)
+
+Das aktive Portfolio erneut simulieren und Equity-Chart + Trades-Excel via Telegram senden — ohne die komplette Optimierung neu durchzuführen:
+
+```bash
+.venv/bin/python3 src/vbot/analysis/show_results.py --replot
+```
+
+Optionale Parameter (werden sonst aus `settings.json` gelesen):
+```bash
+.venv/bin/python3 src/vbot/analysis/show_results.py --replot --capital 200 --from 2024-01-01 --to 2025-01-01
+```
+
 ---
 
 ## Risikoparameter anzeigen
