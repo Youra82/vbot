@@ -1,35 +1,35 @@
 {
   "market": {
-    "symbol": "ADA/USDT:USDT",
+    "symbol": "LINK/USDT:USDT",
     "timeframe": "4h"
   },
   "signal": {
     "fibo_tp_level": 0.5,
     "min_candle_body_pct": 0.3,
-    "min_candle_range_pct": 0.8,
-    "sl_buffer_pct": 0.3,
+    "min_candle_range_pct": 0.5,
+    "sl_buffer_pct": 0.35,
     "confirm_overlap_window": 3,
     "tp_rr_multiplier": 2.5,
     "adx_period": 14,
     "adx_max": 0
   },
   "risk": {
-    "leverage": 30,
+    "leverage": 2,
     "risk_per_trade_pct": 0.5,
     "margin_mode": "isolated"
   },
   "_backtest": {
-    "pnl_pct": -3.66,
-    "win_rate": 27.0,
-    "total_trades": 37,
-    "max_drawdown": 7.04,
-    "avg_rr": 1.41,
+    "pnl_pct": -11.18,
+    "win_rate": 10.0,
+    "total_trades": 30,
+    "max_drawdown": 11.73,
+    "avg_rr": 1.15,
     "start_date": "2024-04-13",
     "end_date": "2026-04-12",
     "capital": 10.0,
-    "oos_pnl_pct": 2.67,
-    "oos_win_rate": 40.0,
-    "oos_trades": 20,
-    "oos_max_dd": 2.22
+    "oos_pnl_pct": 0.77,
+    "oos_win_rate": 35.7,
+    "oos_trades": 14,
+    "oos_max_dd": 3.35
   }
 }

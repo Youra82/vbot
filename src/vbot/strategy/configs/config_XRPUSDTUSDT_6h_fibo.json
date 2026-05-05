@@ -4,29 +4,32 @@
     "timeframe": "6h"
   },
   "signal": {
-    "fibo_tp_level": 0.786,
-    "min_candle_body_pct": 0.1,
-    "min_candle_range_pct": 0.3,
-    "sl_buffer_pct": 0.45,
-    "confirm_overlap_window": 0
+    "fibo_tp_level": 0.236,
+    "min_candle_body_pct": 0.3,
+    "min_candle_range_pct": 0.4,
+    "sl_buffer_pct": 0.5,
+    "confirm_overlap_window": 3,
+    "tp_rr_multiplier": 3.0,
+    "adx_period": 14,
+    "adx_max": 0
   },
   "risk": {
-    "leverage": 2,
+    "leverage": 30,
     "risk_per_trade_pct": 0.5,
     "margin_mode": "isolated"
   },
   "_backtest": {
-    "pnl_pct": 345.58,
-    "win_rate": 39.8,
-    "total_trades": 2063,
-    "max_drawdown": 27.47,
-    "avg_rr": 1.14,
-    "start_date": "2023-03-27",
-    "end_date": "2026-03-26",
-    "capital": 15.0,
-    "oos_pnl_pct": 165.59,
-    "oos_win_rate": 39.2,
-    "oos_trades": 678,
-    "oos_max_dd": 11.44
+    "pnl_pct": -5.53,
+    "win_rate": 25.8,
+    "total_trades": 93,
+    "max_drawdown": 17.85,
+    "avg_rr": 1.52,
+    "start_date": "2023-04-14",
+    "end_date": "2026-04-12",
+    "capital": 10.0,
+    "oos_pnl_pct": 3.97,
+    "oos_win_rate": 33.3,
+    "oos_trades": 39,
+    "oos_max_dd": 4.48
   }
 }

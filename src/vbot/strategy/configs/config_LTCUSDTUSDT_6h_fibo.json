@@ -1,14 +1,14 @@
 {
   "market": {
-    "symbol": "ETH/USDT:USDT",
+    "symbol": "LTC/USDT:USDT",
     "timeframe": "6h"
   },
   "signal": {
     "fibo_tp_level": 0.5,
     "min_candle_body_pct": 0.5,
-    "min_candle_range_pct": 0.7,
-    "sl_buffer_pct": 0.2,
-    "confirm_overlap_window": 5,
+    "min_candle_range_pct": 0.2,
+    "sl_buffer_pct": 0.15,
+    "confirm_overlap_window": 2,
     "tp_rr_multiplier": 3.0,
     "adx_period": 14,
     "adx_max": 0
@@ -19,17 +19,17 @@
     "margin_mode": "isolated"
   },
   "_backtest": {
-    "pnl_pct": -7.08,
-    "win_rate": 18.2,
-    "total_trades": 33,
-    "max_drawdown": 12.19,
-    "avg_rr": 1.36,
+    "pnl_pct": -8.5,
+    "win_rate": 9.1,
+    "total_trades": 22,
+    "max_drawdown": 8.5,
+    "avg_rr": 1.18,
     "start_date": "2023-04-14",
     "end_date": "2026-04-12",
     "capital": 10.0,
-    "oos_pnl_pct": 5.73,
-    "oos_win_rate": 54.5,
-    "oos_trades": 11,
-    "oos_max_dd": 1.19
+    "oos_pnl_pct": 0.76,
+    "oos_win_rate": 33.3,
+    "oos_trades": 9,
+    "oos_max_dd": 1.73
   }
 }

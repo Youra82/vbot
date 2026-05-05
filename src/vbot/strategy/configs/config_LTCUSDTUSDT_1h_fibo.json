@@ -1,0 +1,35 @@
+{
+  "market": {
+    "symbol": "LTC/USDT:USDT",
+    "timeframe": "1h"
+  },
+  "signal": {
+    "fibo_tp_level": 0.382,
+    "min_candle_body_pct": 0.7,
+    "min_candle_range_pct": 0.1,
+    "sl_buffer_pct": 0.45,
+    "confirm_overlap_window": 3,
+    "tp_rr_multiplier": 2.0,
+    "adx_period": 14,
+    "adx_max": 0
+  },
+  "risk": {
+    "leverage": 2,
+    "risk_per_trade_pct": 0.5,
+    "margin_mode": "isolated"
+  },
+  "_backtest": {
+    "pnl_pct": -11.99,
+    "win_rate": 32.9,
+    "total_trades": 140,
+    "max_drawdown": 22.14,
+    "avg_rr": 1.33,
+    "start_date": "2025-04-13",
+    "end_date": "2026-04-12",
+    "capital": 10.0,
+    "oos_pnl_pct": 7.91,
+    "oos_win_rate": 50.0,
+    "oos_trades": 46,
+    "oos_max_dd": 2.85
+  }
+}

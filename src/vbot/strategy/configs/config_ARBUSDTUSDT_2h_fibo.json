@@ -1,0 +1,35 @@
+{
+  "market": {
+    "symbol": "ARB/USDT:USDT",
+    "timeframe": "2h"
+  },
+  "signal": {
+    "fibo_tp_level": 0.618,
+    "min_candle_body_pct": 0.2,
+    "min_candle_range_pct": 0.7,
+    "sl_buffer_pct": 0.4,
+    "confirm_overlap_window": 3,
+    "tp_rr_multiplier": 2.5,
+    "adx_period": 14,
+    "adx_max": 0
+  },
+  "risk": {
+    "leverage": 30,
+    "risk_per_trade_pct": 0.5,
+    "margin_mode": "isolated"
+  },
+  "_backtest": {
+    "pnl_pct": 1.77,
+    "win_rate": 33.8,
+    "total_trades": 74,
+    "max_drawdown": 6.42,
+    "avg_rr": 1.51,
+    "start_date": "2024-04-13",
+    "end_date": "2026-04-12",
+    "capital": 10.0,
+    "oos_pnl_pct": 0.51,
+    "oos_win_rate": 33.3,
+    "oos_trades": 33,
+    "oos_max_dd": 5.33
+  }
+}

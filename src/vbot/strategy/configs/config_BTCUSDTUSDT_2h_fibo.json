@@ -6,9 +6,12 @@
   "signal": {
     "fibo_tp_level": 0.786,
     "min_candle_body_pct": 0.1,
-    "min_candle_range_pct": 1.0,
-    "sl_buffer_pct": 0.05,
-    "confirm_overlap_window": 0
+    "min_candle_range_pct": 0.3,
+    "sl_buffer_pct": 0.5,
+    "confirm_overlap_window": 0,
+    "tp_rr_multiplier": 3.0,
+    "adx_period": 14,
+    "adx_max": 0
   },
   "risk": {
     "leverage": 2,
@@ -16,17 +19,17 @@
     "margin_mode": "isolated"
   },
   "_backtest": {
-    "pnl_pct": 28.09,
-    "win_rate": 41.3,
-    "total_trades": 1786,
-    "max_drawdown": 16.86,
-    "avg_rr": 1.0,
-    "start_date": "2024-03-26",
-    "end_date": "2026-03-26",
-    "capital": 15.0,
-    "oos_pnl_pct": 20.43,
-    "oos_win_rate": 41.3,
-    "oos_trades": 535,
-    "oos_max_dd": 7.97
+    "pnl_pct": -17.03,
+    "win_rate": 25.1,
+    "total_trades": 259,
+    "max_drawdown": 21.51,
+    "avg_rr": 1.5,
+    "start_date": "2024-04-12",
+    "end_date": "2026-04-12",
+    "capital": 10.0,
+    "oos_pnl_pct": 5.37,
+    "oos_win_rate": 30.5,
+    "oos_trades": 128,
+    "oos_max_dd": 11.05
   }
 }
