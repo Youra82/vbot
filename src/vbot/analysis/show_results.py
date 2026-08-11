@@ -35,7 +35,7 @@ NC     = '\033[0m'
 
 def run_all_configs_isolated(date_from: str, date_to: str, capital: float,
                                configs_filter: list = None):
-    from vbot.analysis.backtester import run_backtest, load_ohlcv
+    from vbot.analysis.backtester import run_backtest, load_ohlcv, FINE_TF_MAP
 
     if not os.path.isdir(CONFIGS_DIR):
         print(f"{RED}Kein Configs-Verzeichnis: {CONFIGS_DIR}{NC}")
@@ -72,7 +72,17 @@ def run_all_configs_isolated(date_from: str, date_to: str, capital: float,
             print(f"  {YELLOW}Keine Daten — uebersprungen.{NC}")
             continue
 
-        result = run_backtest(df, config, capital, symbol, timeframe)
+        fine_df = None
+        fine_tf = FINE_TF_MAP.get(timeframe)
+        if fine_tf:
+            try:
+                fine_df = load_ohlcv(symbol, fine_tf, date_from, date_to)
+                if fine_df is None or fine_df.empty:
+                    fine_df = None
+            except Exception:
+                fine_df = None
+
+        result = run_backtest(df, config, capital, symbol, timeframe, fine_data=fine_df)
         fibo_lvl = config.get('signal', {}).get('fibo_tp_level', '?')
         results.append({
             'filename':  fname,
@@ -114,7 +124,7 @@ def run_all_configs_isolated(date_from: str, date_to: str, capital: float,
 
 def run_manual_portfolio(date_from: str, date_to: str, capital: float,
                           selected_files: list):
-    from vbot.analysis.backtester import run_backtest, load_ohlcv
+    from vbot.analysis.backtester import run_backtest, load_ohlcv, FINE_TF_MAP
     from vbot.analysis.portfolio_simulator import run_portfolio_simulation
 
     strategies_data = {}
@@ -136,9 +146,20 @@ def run_manual_portfolio(date_from: str, date_to: str, capital: float,
         if df.empty:
             print(f"{YELLOW}Keine Daten fuer {symbol} ({timeframe}) — uebersprungen.{NC}")
             continue
+
+        fine_df = None
+        fine_tf = FINE_TF_MAP.get(timeframe)
+        if fine_tf:
+            try:
+                fine_df = load_ohlcv(symbol, fine_tf, date_from, date_to)
+                if fine_df is None or fine_df.empty:
+                    fine_df = None
+            except Exception:
+                fine_df = None
+
         strategies_data[fname] = {
             'symbol': symbol, 'timeframe': timeframe,
-            'df': df, 'config': config,
+            'df': df, 'config': config, 'fine_data': fine_df,
         }
 
     if not strategies_data:
@@ -164,7 +185,7 @@ def run_manual_portfolio(date_from: str, date_to: str, capital: float,
 def run_portfolio_finder(date_from: str, date_to: str, capital: float,
                           target_max_dd: float = 30.0, min_wr: float = 0.0,
                           auto: bool = False, configs_filter: list = None):
-    from vbot.analysis.backtester import run_backtest, load_ohlcv
+    from vbot.analysis.backtester import run_backtest, load_ohlcv, FINE_TF_MAP
     from vbot.analysis.portfolio_simulator import run_portfolio_simulation
 
     if not os.path.isdir(CONFIGS_DIR):
@@ -206,10 +227,21 @@ def run_portfolio_finder(date_from: str, date_to: str, capital: float,
             print(f"    {YELLOW}Keine Daten — uebersprungen.{NC}")
             continue
 
-        data_cache[fname] = {'symbol': symbol, 'timeframe': timeframe,
-                              'df': df, 'config': config}
+        # Feinere Kerzen fuer SL/TP-Intrabar-Reihenfolgen-Aufloesung (oraclebot-Muster).
+        fine_df = None
+        fine_tf = FINE_TF_MAP.get(timeframe)
+        if fine_tf:
+            try:
+                fine_df = load_ohlcv(symbol, fine_tf, date_from, date_to)
+                if fine_df is None or fine_df.empty:
+                    fine_df = None
+            except Exception:
+                fine_df = None
 
-        result = run_backtest(df, config, capital, symbol, timeframe)
+        data_cache[fname] = {'symbol': symbol, 'timeframe': timeframe,
+                              'df': df, 'config': config, 'fine_data': fine_df}
+
+        result = run_backtest(df, config, capital, symbol, timeframe, fine_data=fine_df)
         backtest_results[fname] = result
         coin = symbol.split('/')[0]
         all_results.append({
@@ -736,7 +768,7 @@ def _generate_trades_excel(final_sim: dict, portfolio_files: list, capital: floa
 
 def run_replot(date_from: str, date_to: str, capital: float):
     """Simuliert das aktive Portfolio neu und sendet Charts + Excel via Telegram."""
-    from vbot.analysis.backtester import run_backtest, load_ohlcv
+    from vbot.analysis.backtester import run_backtest, load_ohlcv, FINE_TF_MAP
     from vbot.analysis.portfolio_simulator import run_portfolio_simulation
 
     try:
@@ -791,9 +823,19 @@ def run_replot(date_from: str, date_to: str, capital: float):
         if df.empty or len(df) < 10:
             print(f"    {YELLOW}Keine Daten — uebersprungen.{NC}")
             continue
+        fine_df = None
+        fine_tf = FINE_TF_MAP.get(timeframe)
+        if fine_tf:
+            try:
+                fine_df = load_ohlcv(symbol, fine_tf, date_from, date_to)
+                if fine_df is None or fine_df.empty:
+                    fine_df = None
+            except Exception:
+                fine_df = None
+
         strategies_data[fname] = {'symbol': symbol, 'timeframe': timeframe,
-                                   'df': df, 'config': config}
-        result = run_backtest(df, config, capital, symbol, timeframe)
+                                   'df': df, 'config': config, 'fine_data': fine_df}
+        result = run_backtest(df, config, capital, symbol, timeframe, fine_data=fine_df)
         backtest_results[fname] = result
         all_results.append({
             'filename':     fname,

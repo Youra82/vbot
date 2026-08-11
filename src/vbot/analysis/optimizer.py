@@ -23,7 +23,7 @@ except ImportError:
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', '..'))
 sys.path.append(os.path.join(PROJECT_ROOT, 'src'))
 
-from vbot.analysis.backtester import run_backtest, load_ohlcv, auto_days_for_timeframe
+from vbot.analysis.backtester import run_backtest, load_ohlcv, auto_days_for_timeframe, FINE_TF_MAP
 
 logging.basicConfig(level=logging.WARNING, format='%(levelname)s %(message)s')
 logging.getLogger('optuna').setLevel(logging.WARNING)
@@ -102,7 +102,7 @@ def _get_capital_ranges(capital: float, max_dd: float = 30.0) -> dict:
 # Objective fuer Optuna
 # ---------------------------------------------------------------------------
 
-def _make_objective(df, symbol, timeframe, capital, max_dd, min_wr, max_rr, _stats: list):
+def _make_objective(df, symbol, timeframe, capital, max_dd, min_wr, max_rr, _stats: list, fine_data=None):
     ranges     = _get_capital_ranges(capital, max_dd)
     r_min, r_max, r_step = ranges["risk_per_trade_pct"]
     lev_min, lev_max     = ranges["leverage"]
@@ -161,7 +161,7 @@ def _make_objective(df, symbol, timeframe, capital, max_dd, min_wr, max_rr, _sta
 
         # ── Schritt 1: Training-Backtest ──────────────────────────────────
         try:
-            r_train = run_backtest(df_train, config, capital, symbol, timeframe)
+            r_train = run_backtest(df_train, config, capital, symbol, timeframe, fine_data=fine_data)
         except Exception:
             return -999.0
 
@@ -181,7 +181,7 @@ def _make_objective(df, symbol, timeframe, capital, max_dd, min_wr, max_rr, _sta
 
         # ── Schritt 2: Walk-Forward Test (Out-of-Sample) ──────────────────
         try:
-            r_test = run_backtest(df_test, config, capital, symbol, timeframe)
+            r_test = run_backtest(df_test, config, capital, symbol, timeframe, fine_data=fine_data)
         except Exception:
             return -999.0
 
@@ -247,6 +247,20 @@ def optimize(symbol: str, timeframe: str,
         print(f"  FEHLER: Nicht genug Daten ({len(df)} Kerzen). Uebersprungen.")
         return None
 
+    # Feinere Kerzen fuer SL/TP-Intrabar-Reihenfolgen-Aufloesung (oraclebot-Muster).
+    fine_data = None
+    fine_tf = FINE_TF_MAP.get(timeframe)
+    if fine_tf:
+        try:
+            fine_data = load_ohlcv(symbol, fine_tf, start_date, end_date)
+            if fine_data is None or fine_data.empty:
+                fine_data = None
+            else:
+                print(f"  Fein-Daten geladen: {fine_tf} ({len(fine_data)} Kerzen).")
+        except Exception as _e:
+            print(f"  Warnung: Fein-Daten-Abruf ({fine_tf}) fehlgeschlagen ({_e}).")
+            fine_data = None
+
     split_idx = max(50, int(len(df) * _WFV_TRAIN_RATIO))
     n_train   = split_idx
     n_test    = len(df) - split_idx
@@ -261,7 +275,7 @@ def optimize(symbol: str, timeframe: str,
 
     # _stats: [max_trades_seen, reserved, n_too_few_trades, n_high_dd, best_dd_seen]
     _stats = [0, 0, 0, 0, float('inf')]
-    objective = _make_objective(df, symbol, timeframe, capital, max_dd, min_wr, max_rr, _stats)
+    objective = _make_objective(df, symbol, timeframe, capital, max_dd, min_wr, max_rr, _stats, fine_data=fine_data)
     cores_str = "alle Kerne" if n_jobs == -1 else f"{n_jobs} Kern(e)"
     print(f"  Optimiere {n_trials} Trials ({cores_str})...")
     study.optimize(objective, n_trials=n_trials, show_progress_bar=True, n_jobs=n_jobs)
@@ -307,10 +321,10 @@ def optimize(symbol: str, timeframe: str,
 
     # Finaler Backtest auf vollem Datensatz fuer Metriken
     try:
-        result    = run_backtest(df, config, capital, symbol, timeframe)
+        result    = run_backtest(df, config, capital, symbol, timeframe, fine_data=fine_data)
         # WFV Out-of-Sample Backtest fuer separate Anzeige
         split_idx = max(50, int(len(df) * _WFV_TRAIN_RATIO))
-        r_oos     = run_backtest(df.iloc[split_idx:], config, capital, symbol, timeframe)
+        r_oos     = run_backtest(df.iloc[split_idx:], config, capital, symbol, timeframe, fine_data=fine_data)
         config["_backtest"] = {
             "pnl_pct":      round(result.pnl_pct, 2),
             "win_rate":     round(result.win_rate, 1),

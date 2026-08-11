@@ -15,6 +15,8 @@ import pandas as pd
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', '..'))
 sys.path.append(os.path.join(PROJECT_ROOT, 'src'))
 
+from vbot.analysis.backtester import _resolve_ambiguous_exit
+
 FEE_PCT      = 0.06 / 100
 MIN_NOTIONAL = 5.0
 
@@ -48,10 +50,12 @@ def run_portfolio_simulation(start_capital: float,
         if df is None or df.empty:
             continue
         processed[fname] = {
-            'symbol':    strat['symbol'],
-            'timeframe': strat['timeframe'],
-            'df':        df,
-            'config':    strat['config'],
+            'symbol':          strat['symbol'],
+            'timeframe':       strat['timeframe'],
+            'df':              df,
+            'config':          strat['config'],
+            'fine_data':       strat.get('fine_data'),
+            'coarse_duration': df.index[1] - df.index[0] if len(df.index) >= 2 else None,
         }
 
     if not processed:
@@ -114,17 +118,30 @@ def run_portfolio_simulation(start_capital: float,
             high = float(row['high'])
             low  = float(row['low'])
 
-            hit_sl = hit_tp = False
-            if pos['direction'] == 'long':
-                if low <= pos['sl']:
-                    hit_sl, exit_p = True, pos['sl']
-                elif high >= pos['tp']:
-                    hit_tp, exit_p = True, pos['tp']
-            else:
-                if high >= pos['sl']:
-                    hit_sl, exit_p = True, pos['sl']
-                elif low <= pos['tp']:
-                    hit_tp, exit_p = True, pos['tp']
+            hit_sl = (pos['direction'] == 'long'  and low  <= pos['sl']) or \
+                     (pos['direction'] == 'short' and high >= pos['sl'])
+            hit_tp = (pos['direction'] == 'long'  and high >= pos['tp']) or \
+                     (pos['direction'] == 'short' and low  <= pos['tp'])
+
+            if hit_sl and hit_tp:
+                # Beide Level in derselben Kerze moeglich -- per Fein-Daten
+                # (falls vorhanden) real aufloesen statt SL zu bevorzugen
+                # (oraclebot-Muster).
+                exit_p, _resolved = None, None
+                fine_data = strat.get('fine_data')
+                coarse_duration = strat.get('coarse_duration')
+                if fine_data is not None and coarse_duration is not None:
+                    fine_slice = fine_data.loc[(fine_data.index >= ts) & (fine_data.index < ts + coarse_duration)]
+                    exit_p, _resolved = _resolve_ambiguous_exit(fine_slice, pos['sl'], pos['tp'], pos['direction'])
+                if exit_p is None:
+                    exit_p = pos['sl']  # Fallback: alte SL-first-Konvention
+                    hit_tp = False
+                else:
+                    hit_tp = (_resolved == 'win')
+            elif hit_sl:
+                exit_p = pos['sl']
+            elif hit_tp:
+                exit_p = pos['tp']
 
             if hit_sl or hit_tp:
                 price_diff = exit_p - pos['entry']

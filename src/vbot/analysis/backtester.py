@@ -23,6 +23,38 @@ from vbot.strategy.fibo_logic import get_fibo_signal
 logger = logging.getLogger(__name__)
 
 MIN_NOTIONAL_USDT = 5.0
+
+# Feinere Timeframe je Strategie-Timeframe fuer die SL/TP-Intrabar-Reihenfolgen-
+# Aufloesung (oraclebot-Muster).
+FINE_TF_MAP = {
+    '5m': '1m', '15m': '1m', '30m': '1m',
+    '1h': '5m', '2h': '5m',
+    '4h': '15m', '6h': '15m',
+    '1d': '1h',
+}
+
+
+def _resolve_ambiguous_exit(fine_slice, sl_price, tp_price, side):
+    """
+    Wenn eine Coarse-Kerze SOWOHL SL als auch TP beruehrt haette, per feineren
+    Kerzen die tatsaechliche Reihenfolge aufloesen, statt SL blind zu
+    bevorzugen (bisherige, als "konservativ" dokumentierte Konvention).
+    Rueckgabe: (exit_price, result_str) oder (None, None).
+    """
+    if fine_slice is None or fine_slice.empty:
+        return None, None
+    for _, bar in fine_slice.iterrows():
+        if side == 'long':
+            if bar['low'] <= sl_price:
+                return sl_price, 'loss'
+            if bar['high'] >= tp_price:
+                return tp_price, 'win'
+        else:
+            if bar['high'] >= sl_price:
+                return sl_price, 'loss'
+            if bar['low'] <= tp_price:
+                return tp_price, 'win'
+    return None, None
 FEE_PCT           = 0.06 / 100   # Bitget Taker-Gebuehr (je Seite)
 
 
@@ -124,7 +156,8 @@ class BacktestResult:
 def run_backtest(df: pd.DataFrame, config: dict,
                   start_capital: float = 1000.0,
                   symbol: str = "UNKNOWN",
-                  timeframe: str = "1h") -> BacktestResult:
+                  timeframe: str = "1h",
+                  fine_data: pd.DataFrame = None) -> BacktestResult:
     """
     Walk-forward backtest.
     Fuer jede Kerze: Signal auf df[:i] berechnen, dann in Kerze i traden.
@@ -151,6 +184,7 @@ def run_backtest(df: pd.DataFrame, config: dict,
     low_arr  = df['low'].values
     open_arr = df['open'].values
     timestamps = df.index
+    coarse_duration = df.index[1] - df.index[0] if len(df.index) >= 2 else None
 
     for i in range(warmup, len(df)):
         ts = timestamps[i]
@@ -160,18 +194,27 @@ def run_backtest(df: pd.DataFrame, config: dict,
             high_i = high_arr[i]
             low_i  = low_arr[i]
 
-            hit_sl = hit_tp = False
+            hit_sl = (open_trade.direction == 'long'  and low_i  <= open_trade.sl) or \
+                     (open_trade.direction == 'short' and high_i >= open_trade.sl)
+            hit_tp = (open_trade.direction == 'long'  and high_i >= open_trade.tp) or \
+                     (open_trade.direction == 'short' and low_i  <= open_trade.tp)
 
-            if open_trade.direction == 'long':
-                if low_i  <= open_trade.sl:
-                    hit_sl, exit_p = True, open_trade.sl
-                elif high_i >= open_trade.tp:
-                    hit_tp, exit_p = True, open_trade.tp
-            else:
-                if high_i >= open_trade.sl:
-                    hit_sl, exit_p = True, open_trade.sl
-                elif low_i  <= open_trade.tp:
-                    hit_tp, exit_p = True, open_trade.tp
+            if hit_sl and hit_tp:
+                # Beide Level in derselben Kerze moeglich -- per Fein-Daten
+                # (falls vorhanden) real aufloesen statt SL zu bevorzugen
+                # (oraclebot-Muster).
+                exit_p = None
+                if fine_data is not None and coarse_duration is not None:
+                    fine_slice = fine_data.loc[(fine_data.index >= ts) & (fine_data.index < ts + coarse_duration)]
+                    exit_p, _resolved = _resolve_ambiguous_exit(fine_slice, open_trade.sl, open_trade.tp, open_trade.direction)
+                    hit_tp = (_resolved == 'win')
+                if exit_p is None:
+                    exit_p = open_trade.sl  # Fallback: alte SL-first-Konvention
+                    hit_tp = False
+            elif hit_sl:
+                exit_p = open_trade.sl
+            elif hit_tp:
+                exit_p = open_trade.tp
 
             if hit_sl or hit_tp:
                 price_diff = exit_p - open_trade.entry
@@ -254,8 +297,17 @@ def run_backtest(df: pd.DataFrame, config: dict,
                       (side == 'short' and low_i  <= tp_price)
 
         if hit_sl_same or hit_tp_same:
-            # Wenn beides: konservativ → SL (schlimmster Fall)
-            if hit_sl_same:
+            if hit_sl_same and hit_tp_same:
+                # Beide Level in derselben Kerze moeglich -- per Fein-Daten
+                # (falls vorhanden) real aufloesen statt SL zu bevorzugen
+                # (oraclebot-Muster).
+                exit_p, result_str = None, None
+                if fine_data is not None and coarse_duration is not None:
+                    fine_slice = fine_data.loc[(fine_data.index >= ts) & (fine_data.index < ts + coarse_duration)]
+                    exit_p, result_str = _resolve_ambiguous_exit(fine_slice, sl_price, tp_price, side)
+                if exit_p is None:
+                    exit_p, result_str = sl_price, 'loss'  # Fallback: alte SL-first-Konvention
+            elif hit_sl_same:
                 exit_p, result_str = sl_price, 'loss'
             else:
                 exit_p, result_str = tp_price, 'win'
