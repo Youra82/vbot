@@ -22,7 +22,7 @@ import numpy as np
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', '..'))
 sys.path.append(os.path.join(PROJECT_ROOT, 'src'))
 
-from vbot.analysis.backtester import run_backtest, load_ohlcv, auto_days_for_timeframe, BacktestResult, FINE_TF_MAP
+from vbot.analysis.backtester import run_backtest, load_ohlcv, auto_days_for_timeframe, BacktestResult, FINE_TF_MAP, LazyFineData
 
 logger = logging.getLogger(__name__)
 
@@ -429,12 +429,7 @@ def run_interactive_chart(secrets: dict):
         fine_df = None
         fine_tf = FINE_TF_MAP.get(timeframe)
         if fine_tf:
-            try:
-                fine_df = load_ohlcv(symbol, fine_tf, sd, ed)
-                if fine_df is None or fine_df.empty:
-                    fine_df = None
-            except Exception:
-                fine_df = None
+            fine_df = LazyFineData(symbol, fine_tf)
 
         print("  Fuehre Backtest durch...")
         result = run_backtest(df, config, start_capital, symbol, timeframe, fine_data=fine_df)

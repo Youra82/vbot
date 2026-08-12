@@ -55,6 +55,114 @@ def _resolve_ambiguous_exit(fine_slice, sl_price, tp_price, side):
             if bar['low'] <= tp_price:
                 return tp_price, 'win'
     return None, None
+
+
+class LazyFineData:
+    """
+    On-Demand-Fetcher fuer Fein-Daten (Intrabar-Aufloesung). Laedt Fein-Kerzen
+    nur fuer die Tage, an denen im Backtest tatsaechlich eine same-candle
+    SL/TP-Ambiguitaet auftritt, statt den kompletten Backtest-Zeitraum vorab
+    herunterzuladen -- diese Ambiguitaet ist selten (die weit ueberwiegende
+    Mehrheit der Kerzen braucht nie eine Intrabar-Aufloesung).
+    Ergebnis ist identisch zum eagerly geladenen DataFrame, nur Zeitpunkt und
+    Groesse der Netzwerk-Fetches aendern sich. Pro (symbol, fine_tf)-Instanz
+    wiederverwendbar -- z.B. ueber alle Optuna-Trials eines Optimizer-Laufs
+    hinweg, damit einmal geladene Tage nicht mehrfach abgerufen werden.
+
+    WICHTIG: Fetcht bewusst NICHT ueber load_ohlcv() -- load_ohlcv() cached auf
+    EINE gemeinsame CSV-Datei pro (symbol, timeframe) und wiederholte schmale
+    Lazy-Anfragen wuerden dieselbe Datei gegenseitig ueberschreiben/invalidieren
+    (Cache-Thrashing, in einem Schwesterprojekt beobachtet: fuehrte zu
+    unterschiedlichen Backtest-Ergebnissen zwischen eager und lazy). Daher
+    direkter ccxt-Zugriff ohne Beruehrung des Disk-Caches.
+    """
+    def __init__(self, symbol, fine_tf):
+        self.symbol = symbol
+        self.fine_tf = fine_tf
+        self._days = {}
+        self._exchange = None
+
+    def _get_exchange(self):
+        if self._exchange is not None:
+            return self._exchange
+        import ccxt
+        try:
+            exchange = ccxt.bitget({'enableRateLimit': True, 'options': {'defaultType': 'swap'}})
+            exchange.load_markets()
+            self._exchange = exchange
+        except Exception:
+            self._exchange = None
+        return self._exchange
+
+    def _ensure_day(self, day):
+        if day in self._days:
+            return
+        exchange = self._get_exchange()
+        if exchange is None:
+            self._days[day] = None
+            return
+        try:
+            tf_ms    = exchange.parse_timeframe(self.fine_tf) * 1000
+            since_ms = int(day.value // 10**6)
+            end_ms   = since_ms + 24 * 3600 * 1000
+            all_ohlcv = []
+            while since_ms < end_ms:
+                ohlcv = exchange.fetch_ohlcv(self.symbol, self.fine_tf, since_ms, 200)
+                if not ohlcv:
+                    break
+                ohlcv = [c for c in ohlcv if c[0] < end_ms]
+                if not ohlcv:
+                    break
+                all_ohlcv.extend(ohlcv)
+                new_since = ohlcv[-1][0] + tf_ms
+                if new_since <= since_ms:
+                    break
+                since_ms = new_since
+                time_mod.sleep(exchange.rateLimit / 1000)
+            if not all_ohlcv:
+                self._days[day] = None
+                return
+            df = pd.DataFrame(all_ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
+            df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms', utc=True)
+            df.set_index('timestamp', inplace=True)
+            df.sort_index(inplace=True)
+            df = df[~df.index.duplicated(keep='last')]
+            self._days[day] = df if not df.empty else None
+        except Exception:
+            self._days[day] = None
+
+    def get_slice(self, start_ts, end_ts):
+        if self.fine_tf is None:
+            return None
+        start_ts = pd.Timestamp(start_ts)
+        end_ts   = pd.Timestamp(end_ts)
+        first_day = start_ts.floor('D')
+        last_day  = (end_ts - pd.Timedelta(microseconds=1)).floor('D')
+        parts = []
+        day = first_day
+        while day <= last_day:
+            self._ensure_day(day)
+            if self._days[day] is not None:
+                parts.append(self._days[day])
+            day += pd.Timedelta(days=1)
+        if not parts:
+            return None
+        combined = pd.concat(parts).sort_index()
+        combined = combined[~combined.index.duplicated(keep='first')]
+        return combined.loc[(combined.index >= start_ts) & (combined.index < end_ts)]
+
+
+def _get_fine_slice(fine_data, start_ts, end_ts):
+    """Liest ein Fein-Daten-Fenster aus -- akzeptiert sowohl einen bereits
+    komplett geladenen DataFrame (alte, eager Nutzung) als auch ein
+    LazyFineData-Objekt (neue, on-demand Nutzung), per Duck-Typing."""
+    if fine_data is None:
+        return None
+    if hasattr(fine_data, 'get_slice'):
+        return fine_data.get_slice(start_ts, end_ts)
+    return fine_data.loc[(fine_data.index >= start_ts) & (fine_data.index < end_ts)]
+
+
 FEE_PCT           = 0.06 / 100   # Bitget Taker-Gebuehr (je Seite)
 
 
@@ -205,7 +313,7 @@ def run_backtest(df: pd.DataFrame, config: dict,
                 # (oraclebot-Muster).
                 exit_p = None
                 if fine_data is not None and coarse_duration is not None:
-                    fine_slice = fine_data.loc[(fine_data.index >= ts) & (fine_data.index < ts + coarse_duration)]
+                    fine_slice = _get_fine_slice(fine_data, ts, ts + coarse_duration)
                     exit_p, _resolved = _resolve_ambiguous_exit(fine_slice, open_trade.sl, open_trade.tp, open_trade.direction)
                     hit_tp = (_resolved == 'win')
                 if exit_p is None:
@@ -303,7 +411,7 @@ def run_backtest(df: pd.DataFrame, config: dict,
                 # (oraclebot-Muster).
                 exit_p, result_str = None, None
                 if fine_data is not None and coarse_duration is not None:
-                    fine_slice = fine_data.loc[(fine_data.index >= ts) & (fine_data.index < ts + coarse_duration)]
+                    fine_slice = _get_fine_slice(fine_data, ts, ts + coarse_duration)
                     exit_p, result_str = _resolve_ambiguous_exit(fine_slice, sl_price, tp_price, side)
                 if exit_p is None:
                     exit_p, result_str = sl_price, 'loss'  # Fallback: alte SL-first-Konvention

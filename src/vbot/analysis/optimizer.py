@@ -23,7 +23,7 @@ except ImportError:
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', '..'))
 sys.path.append(os.path.join(PROJECT_ROOT, 'src'))
 
-from vbot.analysis.backtester import run_backtest, load_ohlcv, auto_days_for_timeframe, FINE_TF_MAP
+from vbot.analysis.backtester import run_backtest, load_ohlcv, auto_days_for_timeframe, FINE_TF_MAP, LazyFineData
 
 logging.basicConfig(level=logging.WARNING, format='%(levelname)s %(message)s')
 logging.getLogger('optuna').setLevel(logging.WARNING)
@@ -248,18 +248,11 @@ def optimize(symbol: str, timeframe: str,
         return None
 
     # Feinere Kerzen fuer SL/TP-Intrabar-Reihenfolgen-Aufloesung (oraclebot-Muster).
+    # On-Demand (lazy): nur die Tage mit echter SL/TP-Ambiguitaet werden abgerufen.
     fine_data = None
     fine_tf = FINE_TF_MAP.get(timeframe)
     if fine_tf:
-        try:
-            fine_data = load_ohlcv(symbol, fine_tf, start_date, end_date)
-            if fine_data is None or fine_data.empty:
-                fine_data = None
-            else:
-                print(f"  Fein-Daten geladen: {fine_tf} ({len(fine_data)} Kerzen).")
-        except Exception as _e:
-            print(f"  Warnung: Fein-Daten-Abruf ({fine_tf}) fehlgeschlagen ({_e}).")
-            fine_data = None
+        fine_data = LazyFineData(symbol, fine_tf)
 
     split_idx = max(50, int(len(df) * _WFV_TRAIN_RATIO))
     n_train   = split_idx
